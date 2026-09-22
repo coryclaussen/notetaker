@@ -1,0 +1,1460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F1F2ED">
+<title>Notetaker</title>
+<style>
+  :root{
+    --paper:#F1F2ED; --paper-2:#E9EBE4; --ink:#171A16; --muted:#6E736B;
+    --rule:#D6D9CF; --rec:#C0362C; --marker:#F2CE4B; --ok:#2E6B4F;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --serif:"Iowan Old Style","Charter","Palatino Linotype",Palatino,Georgia,serif;
+    --mono:ui-monospace,"SF Mono","Roboto Mono","DejaVu Sans Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;padding-bottom:calc(78px + env(safe-area-inset-bottom))}
+  .wrap{max-width:640px;margin:0 auto;padding:0 18px}
+  button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  input,select,textarea{font-family:inherit;font-size:16px;color:var(--ink)}
+
+  .mast{display:flex;align-items:baseline;justify-content:space-between;padding:22px 0 14px}
+  .mast h1{font-size:19px;font-weight:600;letter-spacing:-.02em;margin:0}
+  .mast .sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .gear{font-size:13px;color:var(--muted);padding:7px 13px;border-radius:25px}
+  .gear:hover{background:var(--paper-2);color:var(--ink)}
+
+  .deck{border:1px solid var(--rule);background:#FAFBF7;border-radius:25px;padding:26px 22px 24px;text-align:center}
+  .clock{font-family:var(--mono);font-size:42px;font-variant-numeric:tabular-nums;letter-spacing:-.03em;line-height:1;color:var(--muted);transition:color .2s}
+  .clock.live{color:var(--ink)}
+  .meter{display:flex;align-items:flex-end;justify-content:center;gap:3px;height:26px;margin:16px 0 18px}
+  .meter i{width:3px;height:3px;background:var(--rule);border-radius:2px;transition:height .09s linear,background .2s}
+  .meter.live i{background:var(--rec)}
+  .rec{width:66px;height:66px;border-radius:50%;background:var(--rec);display:inline-flex;align-items:center;
+    justify-content:center;transition:transform .08s;box-shadow:0 1px 0 rgba(0,0,0,.12)}
+  .rec:active{transform:scale(.95)}
+  .rec .dot{width:22px;height:22px;border-radius:50%;background:#fff}
+  .rec.stop .dot{border-radius:6px;width:20px;height:20px}
+  .hint{font-size:12.5px;color:var(--muted);margin-top:12px}
+  .pads{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .pad{border:1px solid var(--rule);background:#FAFBF7;border-radius:25px;padding:14px 12px;font-size:14px;
+    font-weight:500;display:flex;align-items:center;justify-content:center;gap:7px;transition:transform .08s}
+  .pad:active{transform:scale(.98)}
+  .pad.mark{border-color:#DCC26B;background:#FBF3D8}
+  .pad:disabled{opacity:.4;cursor:default}
+  .swatch{width:9px;height:9px;border-radius:50%;flex:none}
+
+  .page{margin-top:22px}
+  .line{font-family:var(--serif);font-size:17px;line-height:1.62;margin:0 0 11px;max-width:62ch}
+  .line .mk{background:linear-gradient(transparent 58%,var(--marker) 58%);padding:0 1px}
+  .who{font-family:var(--sans);font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;margin-right:6px;white-space:nowrap}
+  .ts{font-family:var(--mono);font-size:10.5px;color:#A2A79C;margin-right:7px}
+  .interim{font-family:var(--serif);font-size:17px;line-height:1.62;color:#9DA298;font-style:italic}
+
+  .card{border:1px solid var(--rule);background:#FAFBF7;border-radius:25px;padding:22px}
+  .rulebox{border-top:1px solid var(--rule);margin-top:26px;padding-top:16px}
+  .lbl{font-size:12.5px;color:var(--muted);display:block;margin-bottom:6px}
+  .fld{width:100%;padding:12px 18px;border:1px solid var(--rule);border-radius:25px;background:#fff;outline:none}
+  .fld:focus{border-color:#9AA095}
+  textarea.fld{font-family:var(--mono);font-size:13px;line-height:1.6;resize:vertical;border-radius:25px;padding:15px 18px}
+  .btn{background:var(--ink);color:var(--paper);border-radius:25px;padding:13px 24px;font-size:15px;font-weight:600}
+  .btn.ghost{background:none;color:var(--ink);border:1px solid var(--rule);font-weight:500}
+  .btn:disabled{opacity:.45;cursor:default}
+  .btn.sm{padding:9px 18px;font-size:13.5px;font-weight:500}
+  .chip{border:1px solid var(--rule);background:#fff;border-radius:25px;padding:8px 16px;font-size:13.5px;color:var(--muted)}
+  .chip.on{border-color:var(--ink);background:var(--ink);color:var(--paper);font-weight:500}
+  .row{display:flex;flex-wrap:wrap;gap:7px}
+
+  .note{display:block;width:100%;text-align:left;padding:16px 20px;margin-bottom:9px;
+    border:1px solid var(--rule);background:#FAFBF7;border-radius:25px}
+  .note:hover{background:#fff;border-color:#9AA095}
+  .note h3{font-size:15.5px;font-weight:600;margin:0;letter-spacing:-.01em;line-height:1.35}
+  .note .meta{font-size:12px;color:var(--muted);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap}
+
+  .flash{border:1px solid #E3C4C0;background:#FBEEEC;padding:13px 18px;font-size:14px;margin:14px 0;border-radius:25px}
+  .flash.warn{border-color:#C9A227;background:#FBF5E0}
+  .empty{text-align:center;padding:44px 10px;color:var(--muted);font-size:14.5px}
+
+  .bar{position:fixed;left:0;right:0;bottom:0;background:var(--paper);border-top:1px solid var(--rule);border-radius:25px 25px 0 0;
+    padding-bottom:env(safe-area-inset-bottom);z-index:40}
+  .bar .inner{max-width:640px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr}
+  .tab{padding:15px 0;font-size:13.5px;color:var(--muted);font-weight:500}
+  .tab.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink)}
+
+  .sheet{position:fixed;inset:0;background:rgba(23,26,22,.35);z-index:50;display:flex;align-items:flex-end;justify-content:center}
+  .sheet .body{background:var(--paper);width:100%;max-width:640px;max-height:88vh;overflow-y:auto;
+    border-radius:25px 25px 0 0;padding:24px 20px calc(28px + env(safe-area-inset-bottom))}
+  .hide{display:none!important}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--rule);border-top-color:var(--ink);
+    border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+  h2.sec{font-size:13px;font-weight:600;color:var(--muted);margin:22px 0 9px}
+  ul.pts{margin:0;padding-left:19px}
+  ul.pts li{margin-bottom:7px;font-size:15px;line-height:1.55}
+  .todo{display:flex;gap:11px;padding:14px 18px;border:1px solid var(--rule);background:#FAFBF7;border-radius:25px;margin-bottom:8px}
+  .todo .box{width:14px;height:14px;border:1.5px solid var(--ok);border-radius:5px;flex:none;margin-top:3px}
+  .todo .own{font-size:12px;color:var(--muted);margin-top:2px}
+  .qa{padding:13px 19px;border-radius:25px;margin-bottom:9px;font-size:15px;line-height:1.55}
+  .qa.me{background:var(--paper-2);margin-left:28px}
+  .qa.ai{border:1px solid var(--rule);background:#FAFBF7;margin-right:20px;white-space:pre-wrap}
+
+  .insight{border:1px solid var(--rule);background:#FAFBF7;border-radius:25px;padding:16px 20px;margin-bottom:9px}
+  .insight strong{font-size:14.5px;display:block;margin-bottom:5px;line-height:1.4}
+  .insight p{margin:0;font-size:14.5px;line-height:1.58;color:#3A3E38}
+  .person{border:1px solid var(--rule);border-left:6px solid var(--rule);background:#FAFBF7;
+    border-radius:25px;padding:16px 20px;margin-bottom:12px}
+  .person h4{margin:0 0 8px;font-size:16px;font-weight:600}
+  .person dt{font-size:12px;color:var(--muted);margin-top:9px}
+  .person dd{margin:2px 0 0;font-size:14.5px;line-height:1.55}
+  .askq{display:block;width:100%;text-align:left;border:1px solid var(--rule);background:#fff;border-radius:25px;
+    padding:13px 19px;font-size:14.5px;line-height:1.45;margin-bottom:8px}
+  .askq:hover{background:#FAFBF7;border-color:#9AA095}
+  .drop{border:1px dashed #B9BEB4;background:#fff;border-radius:25px;padding:20px;text-align:center;margin-bottom:14px}
+  .drop input{width:100%;font-size:13px}
+  .prog{height:8px;background:var(--paper-2);border-radius:25px;overflow:hidden;margin:12px 0 8px}
+  .prog i{display:block;height:100%;width:0;background:var(--ink);border-radius:25px;transition:width .25s}
+  .hintp{font-size:12.5px;color:var(--muted);line-height:1.55;margin:8px 0 0}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="mast">
+    <div>
+      <h1>Notetaker</h1>
+      <div class="sub">Unlimited minutes. Your notes stay on this device.</div>
+    </div>
+    <button class="gear" id="gearBtn">Settings</button>
+  </div>
+
+  <div id="alerts"></div>
+
+  <section id="viewRecord">
+    <div class="deck">
+      <div class="clock" id="clock">0:00</div>
+      <div class="meter" id="meter"></div>
+      <button class="rec" id="recBtn" aria-label="Start recording"><span class="dot"></span></button>
+      <div class="hint" id="hint">Tap the red button to start recording.</div>
+    </div>
+    <div class="pads hide" id="pads">
+      <button class="pad mark" id="markBtn"><span class="swatch" style="background:var(--marker)"></span>Highlight</button>
+      <button class="pad" id="spkBtn"><span class="swatch" id="spkSwatch"></span><span id="spkName">Speaker 1</span></button>
+    </div>
+    <div class="page" id="livePage"></div>
+  </section>
+
+  <section id="viewImport" class="hide">
+    <div class="card">
+      <p style="margin:0 0 14px;font-size:15px;font-weight:600">Bring in something already recorded</p>
+      <div class="row" id="impMode" style="margin-bottom:18px">
+        <button class="chip on" data-m="text">Paste a transcript</button>
+        <button class="chip" data-m="audio">Audio file</button>
+      </div>
+
+      <div id="impNaming">
+        <label class="lbl" for="impTitle">Name this note</label>
+        <input class="fld" id="impTitle" placeholder="Consult with Ryan" style="margin-bottom:16px">
+        <label class="lbl">What was it?</label>
+        <div class="row" id="impTplRow" style="margin-bottom:16px"></div>
+      </div>
+      <p class="hintp hide" id="impAutoNote" style="margin:0 0 16px">Named and sorted for you. Pick a file and the rest happens on its own.</p>
+
+      <div id="impTextWrap">
+        <label class="lbl" for="impText">Transcript</label>
+        <textarea class="fld" id="impText" rows="9" placeholder="[00:12] Ryan: So what did you have in mind for the sleeve?&#10;[00:19] Cory: Japanese traditional. Koi and water."></textarea>
+        <p class="hintp">Works with a Plaud export, a Zoom or Teams transcript, or anything you typed. Timestamps and speaker names get picked up if they're in there.</p>
+        <button class="btn" id="impBtn" style="margin-top:16px;width:100%">Bring it in</button>
+      </div>
+
+      <div id="impAudioWrap" class="hide">
+        <label class="lbl">Audio file</label>
+        <div class="drop">
+          <input type="file" id="impFile" multiple accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg,.flac">
+          <div id="impFileInfo" style="font-size:12.5px;color:var(--muted);margin-top:10px">Any audio file from your phone or computer</div>
+        </div>
+        <p class="hintp" id="sttWho">Pick one file or several. The type is read off the file itself, so anything from your phone works.</p>
+        <div class="prog hide" id="impProg"><i id="impProgBar"></i></div>
+        <div id="impProgTxt" class="hide" style="font-size:12.5px;color:var(--muted);text-align:center"></div>
+        <button class="btn" id="impAudioBtn" style="margin-top:16px;width:100%">Make me a note</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="viewSave" class="hide">
+    <div class="card">
+      <div style="font-size:14px;color:var(--ok);font-weight:600;margin-bottom:14px">Recording finished</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:16px" id="saveStats"></div>
+      <label class="lbl" for="saveTitle">Name this note</label>
+      <input class="fld" id="saveTitle" style="margin-bottom:18px">
+      <label class="lbl">What was it?</label>
+      <div class="row" id="tplRow" style="margin-bottom:18px"></div>
+      <div id="dlWrap" class="hide" style="margin-bottom:16px">
+        <a id="dlAudio" download="recording.webm" style="font-size:13px;color:var(--muted)">Download the audio file (available until you reload)</a>
+      </div>
+      <div class="prog hide" id="savProg"><i id="savProgBar"></i></div>
+      <div id="savProgTxt" class="hide" style="font-size:12.5px;color:var(--muted);text-align:center;margin-bottom:12px"></div>
+      <div style="display:flex;gap:9px">
+        <button class="btn" id="saveBtn" style="flex:1">Save note</button>
+        <button class="btn ghost" id="tossBtn">Discard</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="viewLib" class="hide">
+    <input class="fld" id="search" placeholder="Search every word you've recorded" style="margin-bottom:6px">
+    <div id="libList"></div>
+  </section>
+
+  <section id="viewDetail" class="hide">
+    <button class="btn sm ghost" id="backBtn" style="margin-bottom:16px">All notes</button>
+    <h2 id="dTitle" style="font-size:22px;font-weight:600;letter-spacing:-.02em;margin:0;line-height:1.28"></h2>
+    <div id="dMeta" style="font-size:12.5px;color:var(--muted);margin:6px 0 18px;display:flex;gap:12px;flex-wrap:wrap"></div>
+    <div class="row" id="dTabs" style="margin-bottom:18px"></div>
+    <div id="dBody"></div>
+    <div class="rulebox" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+      <button class="btn sm ghost" id="copyBtn">Copy as Markdown</button>
+      <button class="btn sm ghost" id="delBtn" style="margin-left:auto;color:var(--rec);border-color:#E3C4C0">Delete</button>
+    </div>
+  </section>
+</div>
+
+<nav class="bar">
+  <div class="inner">
+    <button class="tab on" id="tabRec">Record</button>
+    <button class="tab" id="tabImp">Import</button>
+    <button class="tab" id="tabLib">Notes</button>
+  </div>
+</nav>
+
+<div class="sheet hide" id="sheet">
+  <div class="body">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <strong style="font-size:17px">Settings</strong>
+      <button class="btn sm ghost" id="closeSheet">Done</button>
+    </div>
+    <label class="lbl" for="apiKey">Anthropic API key</label>
+    <input class="fld" id="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off">
+    <p style="font-size:12.5px;color:var(--muted);margin:7px 0 20px;line-height:1.5">
+      Needed for summaries, insights and sorting speakers. Recording and transcribing work without it.
+      The key sits on this device and goes straight to Anthropic. Get one at console.anthropic.com.
+    </p>
+    <label class="lbl" for="dgKey">Deepgram key <span style="color:#9AA095">(audio files, splits speakers)</span></label>
+    <input class="fld" id="dgKey" type="password" placeholder="optional" autocomplete="off" style="margin-bottom:14px">
+    <label class="lbl" for="oaKey">OpenAI key <span style="color:#9AA095">(audio files, Whisper)</span></label>
+    <input class="fld" id="oaKey" type="password" placeholder="optional" autocomplete="off">
+    <p style="font-size:12.5px;color:var(--muted);margin:7px 0 20px;line-height:1.5">
+      Only needed if you upload an mp3 or wav. Claude cannot read audio, so a speech service does that part.
+    </p>
+
+    <div id="capBlock">
+      <label class="lbl" for="capMode">When you tap record</label>
+      <select class="fld" id="capMode" style="margin-bottom:10px">
+        <option value="audio">Write it up after I stop</option>
+        <option value="live">Show words on screen as I talk</option>
+      </select>
+      <p style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:0 0 20px">
+        Writing it up after is more accurate and works out who said what, but costs about 25 cents an hour.
+        Words on screen is free and instant, but rougher, and you tag the speakers yourself.
+      </p>
+    </div>
+    <p class="hide" id="capNote" style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:0 0 20px">
+      Your phone can't show words live in a browser, so recordings are written up after you stop. That version is more accurate anyway, and it sorts out who said what.
+    </p>
+
+    <label style="display:flex;align-items:flex-start;gap:11px;margin-bottom:20px;font-size:14px;line-height:1.45;cursor:pointer">
+      <input type="checkbox" id="autoRun" style="width:19px;height:19px;flex:none;margin-top:1px;accent-color:#171A16">
+      <span>Turn a recording into a finished note on its own — transcribe, name it, summarize and analyze, no extra taps.</span>
+    </label>
+
+    <label class="lbl" for="sttProvider">Speech service</label>
+    <select class="fld" id="sttProvider" style="margin-bottom:20px">
+      <option value="auto">Pick automatically</option>
+      <option value="deepgram">Always Deepgram</option>
+      <option value="openai">Always OpenAI Whisper</option>
+    </select>
+
+    <label class="lbl" for="model">Model</label>
+    <select class="fld" id="model" style="margin-bottom:20px">
+      <option value="claude-sonnet-5">Sonnet 5 — best balance</option>
+      <option value="claude-haiku-4-5-20251001">Haiku 4.5 — cheapest</option>
+      <option value="claude-opus-5">Opus 5 — most thorough</option>
+    </select>
+    <label class="lbl" for="lang">Spoken language</label>
+    <select class="fld" id="lang" style="margin-bottom:20px"></select>
+    <div id="spkBlock">
+      <label class="lbl">People you tag by hand in Live text: <span id="spkCountLbl">1</span></label>
+      <input type="range" min="1" max="6" value="1" id="spkCount" style="width:100%;accent-color:#171A16;margin-bottom:10px">
+      <p style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:0 0 12px">
+        Live text can't hear who is speaking, so you tap a button to switch people while recording.
+        This sets how many people that button cycles through, and what they're called.
+        Leave it at 1 if you're the only one talking.
+      </p>
+      <div id="spkNames" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px"></div>
+    </div>
+    <p class="hide" id="spkAutoNote" style="font-size:12.5px;color:var(--muted);line-height:1.5;margin:0 0 20px">
+      Speakers are worked out for you. The speech service separates voices on its own and counts them, so there is nothing to set here.
+    </p>
+    <div class="rulebox">
+      <p style="font-size:12.5px;color:var(--muted);line-height:1.55;margin:0 0 14px">
+        Live transcribing needs Chrome or Edge, and the page must be on https or localhost.
+        Your browser sends audio to its own speech service to turn it into text.
+        Keep this tab open and awake while recording.
+      </p>
+      <button class="btn sm ghost" id="wipeBtn" style="color:var(--rec);border-color:#E3C4C0">Erase everything on this device</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
+var KEY_DG='ont.dgkey', KEY_OA='ont.oakey';
+
+var TEMPLATES={
+  meeting:{label:'Meeting',hint:'A work meeting. Focus on decisions made, who owns what, and dates.'},
+  consult:{label:'Client consult',hint:'A consultation with a client. Focus on what the client wants, budget and timing, concerns they raised, and anything that was promised.'},
+  call:{label:'Phone call',hint:'A phone call. Focus on what was agreed, numbers or dates said out loud, and follow-ups.'},
+  interview:{label:'Interview',hint:'An interview. Focus on notable answers, strengths, concerns, and a clear recommendation.'},
+  memo:{label:'Voice memo',hint:'A personal voice memo. Keep it very short and pull out tasks and reminders.'}
+};
+
+var LANGS=[['en-US','English (US)'],['en-GB','English (UK)'],['es-US','Spanish (US)'],['es-ES','Spanish (Spain)'],
+ ['fr-FR','French'],['de-DE','German'],['pt-BR','Portuguese (Brazil)'],['it-IT','Italian'],['nl-NL','Dutch'],
+ ['pl-PL','Polish'],['ru-RU','Russian'],['ja-JP','Japanese'],['ko-KR','Korean'],['zh-CN','Chinese (Mandarin)'],
+ ['hi-IN','Hindi'],['ar-SA','Arabic'],['vi-VN','Vietnamese'],['tr-TR','Turkish']];
+
+var SPK_COLORS=['#DCE6DA','#DFE3EF','#F2E4D4','#E6DFEC','#DDE9EA','#EFE0E0'];
+var BARS=30, MAX_SORT_LINES=400;
+
+var sessions=[], prefs={lang:'en-US',model:'claude-sonnet-5',spkCount:1,capture:'live',stt:'auto',auto:true,
+  spkNames:['Speaker 1','Speaker 2','Speaker 3','Speaker 4','Speaker 5','Speaker 6']};
+var apiKey='',dgKey='',oaKey='';
+var impMode='text',uploading=false,pendingAudio=null,markTimes=[];
+var isIOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(/Mac/.test(navigator.userAgent)&&'ontouchend' in document);
+var hasWebSpeech=!!(window.SpeechRecognition||window.webkitSpeechRecognition);
+var rec=null,keepAlive=false,startMs=0,timerId=null,segs=[],speaker=0,pendingMark=false;
+var stream=null,actx=null,rafId=null,mediaRec=null,chunks=[],audioURL=null,wakeLock=null,autosaveId=null;
+var pending=null,pendingTpl='meeting',impTpl='meeting';
+var activeId=null,dTab='summary',busy=false,busyWhat='';
+
+function $(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function fmt(s){s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;
+  return h>0?h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0'):m+':'+String(x).padStart(2,'0');}
+function fmtDate(ts){var d=new Date(ts);
+  return d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})+', '+
+         d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+
+function flash(msg,kind){
+  var el=document.createElement('div');
+  el.className='flash'+(kind==='warn'?' warn':'');
+  el.textContent=msg;
+  $('alerts').appendChild(el);
+  setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},9000);
+}
+
+function load(){
+  try{sessions=JSON.parse(localStorage.getItem(KEY_SESSIONS)||'[]');}catch(e){sessions=[];}
+  try{apiKey=localStorage.getItem(KEY_API)||'';}catch(e){}
+  try{dgKey=localStorage.getItem(KEY_DG)||'';}catch(e){}
+  try{oaKey=localStorage.getItem(KEY_OA)||'';}catch(e){}
+  try{var p=JSON.parse(localStorage.getItem(KEY_PREFS)||'{}');
+      for(var k in p){if(p[k]!==undefined&&p[k]!==null)prefs[k]=p[k];}}catch(e){}
+}
+function saveSessions(){
+  try{localStorage.setItem(KEY_SESSIONS,JSON.stringify(sessions));}
+  catch(e){flash('Storage is full. Delete an old note to make room.','warn');}
+}
+function savePrefs(){try{localStorage.setItem(KEY_PREFS,JSON.stringify(prefs));}catch(e){}}
+
+function buildMeter(){var m=$('meter');m.innerHTML='';for(var i=0;i<BARS;i++)m.appendChild(document.createElement('i'));}
+function setMeter(level){
+  var bars=$('meter').children;
+  for(var i=0;i<bars.length;i++){
+    var d=Math.abs(i-BARS/2)/(BARS/2);
+    var h=level>0?Math.max(3,level*24*(1-d*0.7)*(0.5+Math.random()*0.9)):3;
+    bars[i].style.height=h.toFixed(1)+'px';
+  }
+}
+
+function startAudio(){
+  return navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}})
+  .then(function(s){
+    stream=s;
+    try{
+      var C=window.AudioContext||window.webkitAudioContext;
+      actx=new C();
+      var an=actx.createAnalyser();an.fftSize=256;
+      actx.createMediaStreamSource(s).connect(an);
+      var buf=new Uint8Array(an.frequencyBinCount);
+      (function tick(){
+        an.getByteFrequencyData(buf);
+        var sum=0;for(var i=0;i<buf.length;i++)sum+=buf[i];
+        setMeter(Math.min(1,(sum/buf.length)/85));
+        rafId=requestAnimationFrame(tick);
+      })();
+    }catch(e){}
+    try{
+      mediaRec=new MediaRecorder(s);chunks=[];
+      mediaRec.ondataavailable=function(e){if(e.data&&e.data.size>0)chunks.push(e.data);};
+      mediaRec.onstop=function(){
+        if(chunks.length){try{audioURL=URL.createObjectURL(new Blob(chunks,{type:chunks[0].type||'audio/webm'}));}catch(e){}}
+      };
+      mediaRec.start();
+    }catch(e){}
+  }).catch(function(){});
+}
+function stopAudio(){
+  if(rafId)cancelAnimationFrame(rafId);rafId=null;
+  try{if(mediaRec&&mediaRec.state!=='inactive')mediaRec.stop();}catch(e){}
+  mediaRec=null;
+  try{if(actx)actx.close();}catch(e){}
+  actx=null;
+  if(stream){stream.getTracks().forEach(function(t){t.stop();});stream=null;}
+  setMeter(0);
+}
+
+function pushSeg(text){
+  var t=Math.max(0,Math.floor((Date.now()-startMs)/1000));
+  var mark=pendingMark;pendingMark=false;
+  segs.push({id:uid(),sp:speaker,t:t,text:text,mk:mark});
+  renderLive();
+}
+
+function startRec(){
+  if(!window.isSecureContext){flash('The page must be on https or localhost for the microphone to work.','warn');return;}
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  var audioOnly=(prefs.capture==='audio')||!SR;
+  if(audioOnly&&!pickProvider()){
+    flash('Add a Deepgram key in Settings, or switch to Live text.','warn');return;
+  }
+
+  segs=[];speaker=0;pendingMark=false;audioURL=null;pendingAudio=null;markTimes=[];startMs=Date.now();
+  renderLive();startAudio();
+  try{if(navigator.wakeLock)navigator.wakeLock.request('screen').then(function(w){wakeLock=w;}).catch(function(){});}catch(e){}
+
+  if(audioOnly){
+    keepAlive=true;
+    timerId=setInterval(function(){$('clock').textContent=fmt(Math.floor((Date.now()-startMs)/1000));},500);
+    $('clock').classList.add('live');$('meter').classList.add('live');
+    $('recBtn').classList.add('stop');$('recBtn').setAttribute('aria-label','Stop recording');
+    $('hint').textContent='Recording. Keep this tab open and the screen on.';
+    $('pads').classList.remove('hide');
+    updateSpeakerPad();
+    return;
+  }
+
+  var r=new SR();
+  r.continuous=true;r.interimResults=true;r.lang=prefs.lang;
+  r.onresult=function(e){
+    var live='';
+    for(var i=e.resultIndex;i<e.results.length;i++){
+      var res=e.results[i];
+      if(res.isFinal){var txt=(res[0].transcript||'').trim();if(txt)pushSeg(txt);}
+      else live+=res[0].transcript;
+    }
+    var el=$('interimLine');
+    if(el){el.textContent=live;el.style.display=live?'block':'none';}
+  };
+  r.onerror=function(e){
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){
+      flash('Microphone access is blocked. Allow the mic in your browser, then try again.');
+      keepAlive=false;stopRec(true);
+    }else if(e.error==='audio-capture'){
+      flash('No microphone found.');keepAlive=false;stopRec(true);
+    }
+  };
+  r.onend=function(){if(keepAlive)setTimeout(function(){try{r.start();}catch(err){}},250);};
+
+  rec=r;keepAlive=true;
+  try{r.start();}catch(e){flash('Could not start listening. Reload the page and try again.');return;}
+
+  timerId=setInterval(function(){$('clock').textContent=fmt(Math.floor((Date.now()-startMs)/1000));},500);
+  autosaveId=setInterval(function(){
+    try{localStorage.setItem(KEY_DRAFT,JSON.stringify({start:startMs,segs:segs}));}catch(e){}
+  },10000);
+
+  $('clock').classList.add('live');$('meter').classList.add('live');
+  $('recBtn').classList.add('stop');$('recBtn').setAttribute('aria-label','Stop recording');
+  $('hint').textContent='Listening. Tap the square to stop.';
+  $('pads').classList.remove('hide');
+  updateSpeakerPad();
+}
+
+function stopRec(silent){
+  keepAlive=false;
+  try{if(rec)rec.stop();}catch(e){}
+  rec=null;
+  if(timerId)clearInterval(timerId);timerId=null;
+  if(autosaveId)clearInterval(autosaveId);autosaveId=null;
+  try{if(wakeLock){wakeLock.release();wakeLock=null;}}catch(e){}
+  stopAudio();
+
+  $('clock').classList.remove('live');$('meter').classList.remove('live');
+  $('recBtn').classList.remove('stop');$('recBtn').setAttribute('aria-label','Start recording');
+  setCapMode(prefs.capture||'audio');
+  $('pads').classList.add('hide');
+  if(silent)return;
+
+  var secs=Math.floor((Date.now()-startMs)/1000);
+  var audioOnly=(prefs.capture==='audio')||!(window.SpeechRecognition||window.webkitSpeechRecognition);
+
+  if(audioOnly){
+    setTimeout(function(){
+      if(!chunks.length){
+        flash('No audio was captured. Check the mic and try again.','warn');
+        $('clock').textContent='0:00';return;
+      }
+      var blob=new Blob(chunks,{type:chunks[0].type||'audio/mp4'});
+      pendingAudio={blob:blob,secs:secs};
+      pending=null;
+      var handsOff=(prefs.auto&&apiKey);
+      $('saveTitle').value=handsOff?'':('Recording '+fmtDate(Date.now()));
+      $('saveTitle').placeholder=handsOff?'Left blank, it names itself':'Name this note';
+      $('saveStats').textContent=fmt(secs)+'  \u00b7  '+humanSize(blob.size)+'  \u00b7  '+markTimes.length+' marks';
+      if(audioURL){
+        $('dlWrap').classList.remove('hide');
+        $('dlAudio').href=audioURL;
+        $('dlAudio').download='recording.'+((blob.type.split('/')[1]||'m4a').split(';')[0]);
+      }
+      show('save');
+    },900);
+    return;
+  }
+
+  setTimeout(function(){
+    if(!segs.length){
+      flash('Nothing was picked up. Check your microphone and try again.','warn');
+      $('clock').textContent='0:00';return;
+    }
+    var words=segs.map(function(s){return s.text;}).join(' ').split(/\s+/);
+    pending={secs:secs,segs:segs.slice()};
+    $('saveTitle').value=words.slice(0,8).join(' ').slice(0,60);
+    $('saveStats').textContent=fmt(secs)+'  ·  '+words.length+' words  ·  '+
+      segs.filter(function(s){return s.mk;}).length+' highlights';
+    if(audioURL){
+      $('dlWrap').classList.remove('hide');
+      $('dlAudio').href=audioURL;
+      $('dlAudio').download=($('saveTitle').value.replace(/[^\w\s-]/g,'').trim()||'recording')+'.webm';
+    }else $('dlWrap').classList.add('hide');
+    show('save');
+  },700);
+}
+
+function updateSpeakerPad(){
+  $('spkName').textContent=prefs.spkNames[speaker]||('Speaker '+(speaker+1));
+  $('spkSwatch').style.background=SPK_COLORS[speaker%SPK_COLORS.length];
+  $('spkBtn').disabled=prefs.spkCount<2;
+}
+
+function renderLive(){
+  var html='';
+  for(var i=0;i<segs.length;i++){
+    var s=segs[i];
+    html+='<p class="line">'+
+      (prefs.spkCount>1?'<span class="who" style="background:'+SPK_COLORS[s.sp%SPK_COLORS.length]+'">'+
+        esc(prefs.spkNames[s.sp]||('Speaker '+(s.sp+1)))+'</span>':'')+
+      (s.mk?'<span class="mk">':'')+esc(s.text)+(s.mk?'</span>':'')+'</p>';
+  }
+  html+='<div class="interim" id="interimLine" style="display:none"></div>';
+  $('livePage').innerHTML=html;
+  window.scrollTo(0,document.body.scrollHeight);
+}
+
+/* ---------- import ---------- */
+function parseTranscript(raw){
+  var lines=raw.replace(/\r/g,'').split('\n');
+  var out=[],names=[],lastSp=0;
+
+  function nameIdx(n){
+    n=n.trim();
+    for(var i=0;i<names.length;i++) if(names[i].toLowerCase()===n.toLowerCase()) return i;
+    if(names.length>=6) return 0;
+    names.push(n);return names.length-1;
+  }
+  function toSecs(str){
+    var p=str.split(':').map(Number);
+    if(p.length===3)return p[0]*3600+p[1]*60+p[2];
+    if(p.length===2)return p[0]*60+p[1];
+    return 0;
+  }
+
+  lines.forEach(function(ln){
+    var s=ln.trim();
+    if(!s)return;
+    if(/^\d+$/.test(s))return;
+    if(/^\d\d:\d\d:\d\d[.,]\d+\s*-->/.test(s))return;
+
+    var t=null,who=null,text=s;
+    var m=s.match(/^[\[\(]?(\d{1,2}:\d{2}(?::\d{2})?)[\]\)]?\s*[-\u2013]?\s*(.*)$/);
+    if(m){t=toSecs(m[1]);text=m[2];}
+
+    var m2=text.match(/^([A-Za-z][A-Za-z .'\-]{0,28}?)\s*:\s*(.+)$/);
+    if(m2&&!/^https?$/i.test(m2[1])){who=m2[1];text=m2[2];}
+
+    var mk=false;
+    if(/\[(highlighted|highlight|starred)\]\s*$/i.test(text)){
+      mk=true;text=text.replace(/\s*\[(highlighted|highlight|starred)\]\s*$/i,'');
+    }
+    if(!text.trim())return;
+
+    var sp=(who!==null)?nameIdx(who):lastSp;
+    lastSp=sp;
+    out.push({id:uid(),sp:sp,t:(t===null)?(out.length?out[out.length-1].t:0):t,text:text.trim(),mk:mk});
+  });
+
+  if(out.length<=1&&raw.trim()){
+    var parts=raw.replace(/\s+/g,' ').split(/([.!?])\s+/);
+    var joined=[],cur='';
+    parts.forEach(function(p){
+      cur+=p;
+      if(/^[.!?]$/.test(p)){joined.push(cur.trim());cur='';}
+    });
+    if(cur.trim())joined.push(cur.trim());
+    out=joined.filter(function(p){return p;}).map(function(p,i){
+      return {id:uid(),sp:0,t:i*5,text:p,mk:false};
+    });
+  }
+  return {segs:out,names:names};
+}
+
+function doImport(){
+  var raw=$('impText').value||'';
+  if(!raw.trim()){flash('Paste a transcript first.','warn');return;}
+  var p=parseTranscript(raw);
+  if(!p.segs.length){flash('Could not read anything in that text.','warn');return;}
+
+  var names=p.names.length?p.names:['Speaker 1'];
+  var last=p.segs[p.segs.length-1];
+  var s={
+    id:uid(),
+    title:($('impTitle').value||'').trim()||'Imported transcript',
+    created:Date.now(),secs:last.t||0,tpl:impTpl,lang:prefs.lang,
+    spkNames:names,segs:p.segs,summary:null,deep:null,chat:[],imported:true
+  };
+  sessions.unshift(s);saveSessions();
+  $('impText').value='';$('impTitle').value='';
+  activeId=s.id;dTab='summary';show('detail');
+  flash(names.length>1
+    ? 'Brought in '+p.segs.length+' lines and found '+names.length+' speakers.'
+    : 'Brought in '+p.segs.length+' lines. Open Transcript and tap "Sort out who said what".');
+}
+
+
+/* ---------- audio file transcription ---------- */
+function sniffType(buf,fallback){
+  var b=new Uint8Array(buf);
+  function a(o,n){var s='';for(var i=0;i<n;i++)s+=String.fromCharCode(b[o+i]||0);return s;}
+  if(a(0,3)==='ID3')return 'audio/mpeg';
+  if(b[0]===0xFF&&(b[1]&0xE0)===0xE0)return 'audio/mpeg';
+  if(a(0,4)==='RIFF'&&a(8,4)==='WAVE')return 'audio/wav';
+  if(a(4,4)==='ftyp')return 'audio/mp4';
+  if(a(0,4)==='OggS')return 'audio/ogg';
+  if(a(0,4)==='fLaC')return 'audio/flac';
+  if(b[0]===0x1A&&b[1]===0x45&&b[2]===0xDF&&b[3]===0xA3)return 'audio/webm';
+  if(a(0,4)==='FORM')return 'audio/aiff';
+  return fallback||'audio/*';
+}
+
+function readHead(blob){
+  return new Promise(function(res){
+    var slice=blob.slice(0,16);
+    if(slice.arrayBuffer)return slice.arrayBuffer().then(res,function(){res(new ArrayBuffer(16));});
+    var fr=new FileReader();
+    fr.onload=function(){res(fr.result);};
+    fr.onerror=function(){res(new ArrayBuffer(16));};
+    fr.readAsArrayBuffer(slice);
+  });
+}
+
+function pickProvider(){
+  if(prefs.stt==='deepgram')return dgKey?'deepgram':null;
+  if(prefs.stt==='openai')return oaKey?'openai':null;
+  if(dgKey)return 'deepgram';
+  if(oaKey)return 'openai';
+  return null;
+}
+
+function humanSize(b){
+  if(b<1024*1024)return Math.round(b/1024)+' KB';
+  return (b/1048576).toFixed(1)+' MB';
+}
+
+function parseDeepgram(d){
+  var alt=(((d.results||{}).channels||[])[0]||{}).alternatives;
+  alt=(alt&&alt[0])||{};
+  var words=alt.words||[];
+  if(!words.length){
+    if(!alt.transcript)return {segs:[],names:[]};
+    return {segs:[{id:uid(),sp:0,t:0,text:alt.transcript,mk:false}],names:['Speaker 1']};
+  }
+  var segs=[],cur=null,lastEnd=0,maxSp=0;
+  words.forEach(function(w){
+    var sp=(typeof w.speaker==='number')?Math.min(w.speaker,5):0;
+    if(sp>maxSp)maxSp=sp;
+    var txt=w.punctuated_word||w.word||'';
+    var gap=(w.start||0)-lastEnd;
+    var brk=!cur||cur.sp!==sp||gap>2||
+            (cur.text.length>320&&/[.!?]$/.test(cur.text));
+    if(brk){
+      if(cur)segs.push(cur);
+      cur={id:uid(),sp:sp,t:Math.floor(w.start||0),text:txt,mk:false};
+    }else cur.text+=' '+txt;
+    lastEnd=w.end||w.start||lastEnd;
+  });
+  if(cur)segs.push(cur);
+  var names=[];
+  for(var i=0;i<=maxSp;i++)names.push('Speaker '+(i+1));
+  return {segs:segs,names:names.length?names:['Speaker 1']};
+}
+
+function parseWhisper(d){
+  var segs=(d.segments||[]).map(function(x){
+    return {id:uid(),sp:0,t:Math.floor(x.start||0),text:(x.text||'').trim(),mk:false};
+  }).filter(function(x){return x.text;});
+  if(!segs.length&&d.text)segs=[{id:uid(),sp:0,t:0,text:String(d.text).trim(),mk:false}];
+  return {segs:segs,names:['Speaker 1']};
+}
+
+var progTarget='imp';
+function setProg(pct,msg){
+  var bar=$(progTarget+'Prog'),txt=$(progTarget+'ProgTxt');
+  if(!bar)return;
+  if(pct===null){bar.classList.add('hide');txt.classList.add('hide');return;}
+  bar.classList.remove('hide');txt.classList.remove('hide');
+  $(progTarget+'ProgBar').style.width=Math.max(2,Math.min(100,pct))+'%';
+  txt.textContent=msg||'';
+}
+
+function transcribeAudio(blob,fallbackName,prefix){
+  var prov=pickProvider();
+  if(!prov)return Promise.reject(new Error('nostt'));
+  var label=(prov==='deepgram')?'Deepgram':'OpenAI';
+  prefix=prefix||'';
+
+  if(prov==='openai'&&blob.size>25*1024*1024)
+    return Promise.reject(new Error('Whisper caps uploads at 25 MB and this is '+humanSize(blob.size)+'. Add a Deepgram key, or use a smaller mp3.'));
+  if(blob.size>300*1024*1024)
+    return Promise.reject(new Error('That file is '+humanSize(blob.size)+'. Export an mp3 instead of a wav.'));
+
+  setProg(2,prefix+'Getting ready');
+
+  return readHead(blob).then(function(head){
+    var ctype=sniffType(head,blob.type);
+    var lang=(prefs.lang||'en-US').split('-')[0];
+
+    return new Promise(function(resolve,reject){
+      var xhr=new XMLHttpRequest();
+      if(prov==='deepgram'){
+        xhr.open('POST','https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true&diarize=true&language='+encodeURIComponent(lang));
+        xhr.setRequestHeader('Authorization','Token '+dgKey);
+        xhr.setRequestHeader('Content-Type',ctype);
+      }else{
+        xhr.open('POST','https://api.openai.com/v1/audio/transcriptions');
+        xhr.setRequestHeader('Authorization','Bearer '+oaKey);
+      }
+
+      xhr.upload.onprogress=function(e){
+        if(e.lengthComputable)setProg(Math.max(2,Math.round((e.loaded/e.total)*55)),
+          prefix+'Sending '+humanSize(e.loaded)+' of '+humanSize(e.total));
+      };
+      xhr.upload.onload=function(){setProg(58,prefix+'Turning it into text');};
+
+      xhr.onload=function(){
+        if(xhr.status<200||xhr.status>=300){
+          var msg=xhr.responseText||'';
+          try{var j=JSON.parse(msg);msg=(j.err_msg||(j.error&&(j.error.message||j.error))||msg);}catch(e){}
+          return reject(new Error(label+' said no ('+xhr.status+'): '+String(msg).slice(0,160)));
+        }
+        var data;
+        try{data=JSON.parse(xhr.responseText);}
+        catch(e){return reject(new Error('Could not read the reply from '+label+'.'));}
+
+        var r=(prov==='deepgram')?parseDeepgram(data):parseWhisper(data);
+        if(!r.segs.length)return reject(new Error('No speech was found in that audio.'));
+        applyMarks(r.segs);
+
+        var dur=0;
+        try{dur=Math.floor((data.metadata&&data.metadata.duration)||data.duration||0);}catch(e){}
+        if(!dur)dur=r.segs[r.segs.length-1].t;
+
+        var fromSave=(progTarget==='sav');
+        var fld=fromSave?$('saveTitle'):$('impTitle');
+        var typed=((fld&&fld.value)||'').trim();
+        var s={
+          id:uid(),
+          title:typed||fallbackName,
+          autoTitle:!typed,
+          created:Date.now(),secs:dur,tpl:(fromSave?pendingTpl:impTpl),lang:prefs.lang,
+          spkNames:r.names,segs:r.segs,summary:null,deep:null,chat:[],
+          imported:true,source:label
+        };
+        sessions.unshift(s);saveSessions();
+        setProg(72,prefix+label+' found '+(r.names.length>1?r.names.length+' voices':'one voice'));
+
+        if(!prefs.auto||!apiKey)return resolve(s);
+        runPipeline(s,function(msg){setProg(84,prefix+msg);})
+          .then(function(){resolve(s);})
+          .catch(function(){
+            flash('Transcribed it, but the summary did not come back. Open the note and tap Summarize.','warn');
+            resolve(s);
+          });
+      };
+
+      xhr.onerror=function(){
+        reject(new Error('Could not reach '+label+'. Check the key and your connection. If the browser blocked the request, it needs to go through your own server.'));
+      };
+
+      if(prov==='deepgram')xhr.send(blob);
+      else{
+        var fd=new FormData();
+        fd.append('file',blob,fallbackName+'.'+(ctype.split('/')[1]||'mp3').replace('mpeg','mp3'));
+        fd.append('model','whisper-1');
+        fd.append('response_format','verbose_json');
+        fd.append('language',lang);
+        xhr.send(fd);
+      }
+    });
+  });
+}
+
+function runQueue(list,btn,onEnd){
+  uploading=true;
+  var restore=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> Working';}
+  var made=[],failed=0;
+
+  function next(i){
+    if(i>=list.length){
+      uploading=false;
+      if(btn){btn.disabled=false;btn.textContent=restore;}
+      setProg(null);
+      onEnd(made,failed);
+      return;
+    }
+    var f=list[i];
+    var pre=list.length>1?('File '+(i+1)+' of '+list.length+' \u00b7 '):'';
+    var name=(f.name||('Recording '+fmtDate(Date.now()))).replace(/\.[^.]+$/,'');
+    transcribeAudio(f,name,pre).then(function(s){
+      made.push(s);next(i+1);
+    }).catch(function(e){
+      failed++;
+      flash(e.message==='nostt'?'Add a Deepgram or OpenAI key in Settings to turn audio into text.':e.message,'warn');
+      next(i+1);
+    });
+  }
+  next(0);
+}
+
+function applyMarks(segs){
+  if(!markTimes.length)return;
+  markTimes.forEach(function(mt){
+    var best=null;
+    for(var i=0;i<segs.length;i++){
+      if(segs[i].t<=mt+1)best=segs[i];else break;
+    }
+    if(best)best.mk=true;
+  });
+  markTimes=[];
+}
+
+function transcribeFile(){
+  if(uploading)return;
+  var fl=$('impFile').files;
+  if(!fl||!fl.length){flash('Pick an audio file first.','warn');return;}
+  progTarget='imp';markTimes=[];
+  var list=Array.prototype.slice.call(fl);
+  runQueue(list,$('impAudioBtn'),function(made,failed){
+    $('impTitle').value='';$('impFile').value='';
+    $('impFileInfo').textContent='Any audio file from your phone or computer';
+    if(!made.length)return;
+    if(made.length===1){activeId=made[0].id;dTab='summary';show('detail');}
+    else{activeId=null;show('lib');flash(made.length+' notes are ready'+(failed?', '+failed+' did not go through':'')+'.');}
+  });
+}
+
+function setCapMode(m){
+  prefs.capture=m;savePrefs();
+  if($('capMode'))$('capMode').value=m;
+  if($('spkBlock')){
+    $('spkBlock').classList.toggle('hide',m==='audio');
+    $('spkAutoNote').classList.toggle('hide',m!=='audio');
+  }
+  if(!keepAlive){
+    $('hint').textContent = (m==='audio')
+      ? 'Tap the red button. When you stop, you get a written note.'
+      : 'Tap the red button. Words appear here as you talk.';
+  }
+}
+
+function setImpMode(m){
+  impMode=m;
+  $('impTextWrap').classList.toggle('hide',m!=='text');
+  $('impAudioWrap').classList.toggle('hide',m!=='audio');
+  var handsOff=(m==='audio'&&prefs.auto&&apiKey);
+  $('impNaming').classList.toggle('hide',handsOff);
+  $('impAutoNote').classList.toggle('hide',!handsOff);
+  Array.prototype.forEach.call($('impMode').children,function(b){
+    b.classList.toggle('on',b.getAttribute('data-m')===m);
+  });
+}
+
+/* ---------- save ---------- */
+function renderTplRow(elId,cur,pick){
+  var h='';
+  for(var k in TEMPLATES)h+='<button class="chip'+(k===cur?' on':'')+'" data-tpl="'+k+'">'+esc(TEMPLATES[k].label)+'</button>';
+  $(elId).innerHTML=h;
+  Array.prototype.forEach.call($(elId).children,function(b){
+    b.onclick=function(){pick(b.getAttribute('data-tpl'));};
+  });
+}
+function drawImpTpl(){renderTplRow('impTplRow',impTpl,function(k){impTpl=k;drawImpTpl();});}
+function drawSaveTpl(){renderTplRow('tplRow',pendingTpl,function(k){pendingTpl=k;drawSaveTpl();});}
+
+function commitSave(){
+  if(!pending)return;
+  var s={
+    id:uid(),title:($('saveTitle').value||'').trim()||'Untitled note',
+    created:Date.now(),secs:pending.secs,tpl:pendingTpl,lang:prefs.lang,
+    spkNames:prefs.spkNames.slice(0,Math.max(1,prefs.spkCount)),
+    segs:pending.segs,summary:null,deep:null,chat:[]
+  };
+  sessions.unshift(s);saveSessions();
+  try{localStorage.removeItem(KEY_DRAFT);}catch(e){}
+  pending=null;segs=[];$('clock').textContent='0:00';renderLive();
+  activeId=s.id;dTab='summary';show('detail');
+}
+
+/* ---------- library ---------- */
+function renderLib(){
+  var q=($('search').value||'').toLowerCase().trim();
+  var list=sessions.filter(function(s){
+    if(!q)return true;
+    if(s.title.toLowerCase().indexOf(q)>-1)return true;
+    if(s.summary&&JSON.stringify(s.summary).toLowerCase().indexOf(q)>-1)return true;
+    return s.segs.some(function(x){return x.text.toLowerCase().indexOf(q)>-1;});
+  });
+  if(!list.length){
+    $('libList').innerHTML='<div class="empty">'+(sessions.length?'Nothing matches that search.':'No notes yet. Record something or import a transcript.')+'</div>';
+    return;
+  }
+  var h='';
+  list.forEach(function(s){
+    var marks=s.segs.filter(function(x){return x.mk;}).length;
+    h+='<button class="note" data-id="'+s.id+'"><h3>'+esc(s.title)+'</h3><div class="meta">'+
+      '<span>'+fmtDate(s.created)+'</span><span>'+fmt(s.secs)+'</span>'+
+      (marks?'<span>'+marks+' highlighted</span>':'')+
+      (s.summary?'<span>summarized</span>':'')+
+      (s.deep?'<span>analyzed</span>':'')+
+      (s.imported?'<span>imported</span>':'')+'</div></button>';
+  });
+  $('libList').innerHTML=h;
+  Array.prototype.forEach.call($('libList').children,function(b){
+    if(!b.getAttribute)return;
+    b.onclick=function(){activeId=b.getAttribute('data-id');dTab='summary';show('detail');};
+  });
+}
+
+/* ---------- detail ---------- */
+function current(){for(var i=0;i<sessions.length;i++)if(sessions[i].id===activeId)return sessions[i];return null;}
+
+function transcriptText(s){
+  return s.segs.map(function(x){
+    var name=(s.spkNames&&s.spkNames.length>1)?((s.spkNames[x.sp]||('Speaker '+(x.sp+1)))+': '):'';
+    return '['+fmt(x.t)+'] '+name+x.text+(x.mk?'  [highlighted]':'');
+  }).join('\n');
+}
+
+function renderDetail(){
+  var s=current();
+  if(!s){show('lib');return;}
+  $('dTitle').textContent=s.title;
+  $('dMeta').innerHTML='<span>'+fmtDate(s.created)+'</span><span>'+fmt(s.secs)+'</span><span>'+
+    esc(TEMPLATES[s.tpl]?TEMPLATES[s.tpl].label:'Note')+'</span>'+
+    ((s.spkNames&&s.spkNames.length>1)?'<span>'+s.spkNames.length+' speakers</span>':'');
+
+  var marks=s.segs.filter(function(x){return x.mk;}).length;
+  var tabs=[['summary','Summary'],['insights','Insights'],['people','People'],
+            ['transcript','Transcript'],['marks','Highlights'+(marks?' ('+marks+')':'')],['ask','Ask']];
+  $('dTabs').innerHTML=tabs.map(function(t){
+    return '<button class="chip'+(dTab===t[0]?' on':'')+'" data-t="'+t[0]+'">'+esc(t[1])+'</button>';}).join('');
+  Array.prototype.forEach.call($('dTabs').children,function(b){
+    b.onclick=function(){dTab=b.getAttribute('data-t');renderDetail();};
+  });
+
+  var h='';
+
+  if(dTab==='summary'){
+    if(!s.summary){
+      h='<div class="card" style="text-align:center">'+
+        '<p style="margin:0 0 6px;font-size:15px">No summary yet</p>'+
+        '<p style="margin:0 0 16px;font-size:13px;color:var(--muted)">Claude reads the transcript and pulls out the points, decisions and to-dos.</p>'+
+        '<button class="btn" id="sumBtn"'+(busy?' disabled':'')+'>'+
+        ((busy&&busyWhat==='sum')?'<span class="spin"></span> Working':'Summarize this')+'</button>'+
+        (apiKey?'':'<p style="margin:14px 0 0;font-size:12.5px;color:var(--muted)">Add your Anthropic API key in Settings first.</p>')+'</div>';
+    }else{
+      var sm=s.summary;
+      h+='<div class="card" style="border-left:6px solid var(--marker)">'+
+        '<p style="margin:0;font-weight:600;font-size:16px;line-height:1.4">'+esc(sm.headline||'')+'</p>'+
+        '<p style="margin:9px 0 0;font-size:15px;line-height:1.6;color:#3A3E38">'+esc(sm.tldr||'')+'</p></div>';
+      h+=section('Key points',sm.keyPoints);
+      h+=section('Decisions',sm.decisions);
+      if(sm.actionItems&&sm.actionItems.length){
+        h+='<h2 class="sec">To do</h2>';
+        sm.actionItems.forEach(function(a){
+          h+='<div class="todo"><span class="box"></span><div><div style="font-size:15px;line-height:1.45">'+
+            esc(a.task||'')+'</div><div class="own">'+esc(a.owner||'Unassigned')+'</div></div></div>';
+        });
+      }
+      h+=section('Still open',sm.openQuestions);
+      h+='<div style="margin-top:18px"><button class="btn sm ghost" id="sumBtn"'+(busy?' disabled':'')+'>'+
+        ((busy&&busyWhat==='sum')?'<span class="spin"></span> Working':'Redo summary')+'</button></div>';
+    }
+  }
+
+  if(dTab==='insights'){
+    if(!s.deep){
+      h='<div class="card" style="text-align:center">'+
+        '<p style="margin:0 0 6px;font-size:15px">Dig into what was really said</p>'+
+        '<p style="margin:0 0 16px;font-size:13px;color:var(--muted);line-height:1.55">Patterns, disagreements, what got skipped, and questions worth asking yourself afterward.</p>'+
+        '<button class="btn" id="deepBtn"'+(busy?' disabled':'')+'>'+
+        ((busy&&busyWhat==='deep')?'<span class="spin"></span> Thinking':'Analyze it')+'</button>'+
+        (apiKey?'':'<p style="margin:14px 0 0;font-size:12.5px;color:var(--muted)">Add your Anthropic API key in Settings first.</p>')+'</div>';
+    }else{
+      var d=s.deep;
+      if(d.insights&&d.insights.length){
+        h+='<h2 class="sec" style="margin-top:0">What stands out</h2>';
+        d.insights.forEach(function(i){
+          h+='<div class="insight"><strong>'+esc(i.title||'')+'</strong><p>'+esc(i.detail||'')+'</p></div>';
+        });
+      }
+      if(d.tensions&&d.tensions.length)h+=section('Where people did not line up',d.tensions);
+      if(d.gaps&&d.gaps.length)h+=section('What never got covered',d.gaps);
+      if(d.questions&&d.questions.length){
+        h+='<h2 class="sec">Questions worth asking</h2>'+
+           '<p style="font-size:12.5px;color:var(--muted);margin:0 0 10px">Tap one and Claude answers it from the transcript.</p>';
+        d.questions.forEach(function(q,i){h+='<button class="askq" data-q="'+i+'">'+esc(q)+'</button>';});
+      }
+      h+='<div style="margin-top:18px"><button class="btn sm ghost" id="deepBtn"'+(busy?' disabled':'')+'>'+
+        ((busy&&busyWhat==='deep')?'<span class="spin"></span> Thinking':'Redo analysis')+'</button></div>';
+    }
+  }
+
+  if(dTab==='people'){
+    if(!s.deep||!s.deep.speakers||!s.deep.speakers.length){
+      h='<div class="empty">Run the analysis on the Insights tab and each person&#39;s side shows up here.</div>';
+    }else{
+      s.deep.speakers.forEach(function(p,i){
+        h+='<div class="person" style="border-left-color:'+SPK_COLORS[i%SPK_COLORS.length]+'">'+
+          '<h4>'+esc(p.name||('Speaker '+(i+1)))+'</h4><dl style="margin:0">';
+        if(p.wanted)   h+='<dt>What they were after</dt><dd>'+esc(p.wanted)+'</dd>';
+        if(p.position) h+='<dt>Where they stood</dt><dd>'+esc(p.position)+'</dd>';
+        if(p.committed)h+='<dt>What they committed to</dt><dd>'+esc(p.committed)+'</dd>';
+        if(p.tone)     h+='<dt>How they came across</dt><dd>'+esc(p.tone)+'</dd>';
+        h+='</dl></div>';
+      });
+    }
+  }
+
+  if(dTab==='transcript'){
+    h='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'+
+      '<button class="btn sm ghost" id="sortBtn"'+(busy?' disabled':'')+'>'+
+      ((busy&&busyWhat==='sort')?'<span class="spin"></span> Sorting':'Sort out who said what')+'</button></div>'+
+      '<div class="page">'+s.segs.map(function(x){
+        return '<p class="line"><span class="ts">'+fmt(x.t)+'</span>'+
+          ((s.spkNames&&s.spkNames.length>1)?'<span class="who" style="background:'+SPK_COLORS[x.sp%SPK_COLORS.length]+'">'+
+            esc(s.spkNames[x.sp]||('Speaker '+(x.sp+1)))+'</span>':'')+
+          (x.mk?'<span class="mk">':'')+esc(x.text)+(x.mk?'</span>':'')+'</p>';
+      }).join('')+'</div>';
+  }
+
+  if(dTab==='marks'){
+    var hl=s.segs.filter(function(x){return x.mk;});
+    h=hl.length?'<div class="page">'+hl.map(function(x){
+        return '<p class="line"><span class="ts">'+fmt(x.t)+'</span><span class="mk">'+esc(x.text)+'</span></p>';
+      }).join('')+'</div>'
+      :'<div class="empty">Nothing was highlighted here. Tap Highlight while recording to mark a moment.</div>';
+  }
+
+  if(dTab==='ask'){
+    h='<div id="chatBox">';
+    if(!s.chat.length)h+='<div class="empty" style="padding:26px 10px">Ask anything about this recording.<br>&quot;What did we agree on the price?&quot;</div>';
+    s.chat.forEach(function(m){h+='<div class="qa '+(m.role==='user'?'me':'ai')+'">'+esc(m.text)+'</div>';});
+    if(busy&&busyWhat==='ask')h+='<div style="font-size:13px;color:var(--muted);padding:4px 2px"><span class="spin"></span> Reading the transcript</div>';
+    h+='</div><div style="display:flex;gap:8px;margin-top:12px">'+
+      '<input class="fld" id="qInput" placeholder="Ask a question" style="flex:1">'+
+      '<button class="btn" id="askBtn"'+(busy?' disabled':'')+'>Ask</button></div>'+
+      (apiKey?'':'<p style="font-size:12.5px;color:var(--muted);margin-top:10px">Add your Anthropic API key in Settings to use this.</p>');
+  }
+
+  $('dBody').innerHTML=h;
+
+  if($('sumBtn'))  $('sumBtn').onclick=makeSummary;
+  if($('deepBtn')) $('deepBtn').onclick=makeDeep;
+  if($('sortBtn')) $('sortBtn').onclick=sortSpeakers;
+  if($('askBtn')){
+    $('askBtn').onclick=function(){askQuestion($('qInput').value);};
+    $('qInput').onkeydown=function(e){if(e.key==='Enter')askQuestion($('qInput').value);};
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.askq'),function(b){
+    b.onclick=function(){
+      var cur=current();
+      if(!cur||!cur.deep||!cur.deep.questions)return;
+      var q=cur.deep.questions[parseInt(b.getAttribute('data-q'),10)];
+      dTab='ask';renderDetail();askQuestion(q);
+    };
+  });
+}
+
+function section(title,items){
+  if(!items||!items.length)return '';
+  return '<h2 class="sec">'+esc(title)+'</h2><ul class="pts">'+
+    items.map(function(p){return '<li>'+esc(p)+'</li>';}).join('')+'</ul>';
+}
+
+/* ---------- Claude ---------- */
+function callClaude(prompt,maxTokens){
+  if(!apiKey)return Promise.reject(new Error('nokey'));
+  return fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'content-type':'application/json','x-api-key':apiKey,
+      'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:prefs.model,max_tokens:maxTokens||2000,messages:[{role:'user',content:prompt}]})
+  }).then(function(r){
+    if(!r.ok)return r.text().then(function(t){throw new Error(t.slice(0,200));});
+    return r.json();
+  }).then(function(d){
+    return (d.content||[]).filter(function(c){return c.type==='text';}).map(function(c){return c.text;}).join('\n');
+  });
+}
+function parseJSON(raw){
+  var clean=raw.replace(/```json/gi,'').replace(/```/g,'').trim();
+  var a=clean.indexOf('{'),b=clean.lastIndexOf('}');
+  return JSON.parse(clean.slice(a,b+1));
+}
+function guard(what){
+  if(busy)return false;
+  if(!apiKey){flash('Add your Anthropic API key in Settings first.','warn');return false;}
+  busy=true;busyWhat=what;renderDetail();return true;
+}
+function done(){busy=false;busyWhat='';renderDetail();}
+
+function summaryPrompt(s){
+  var tpl=TEMPLATES[s.tpl]||TEMPLATES.meeting;
+  var hl=s.segs.filter(function(x){return x.mk;});
+  var hlText=hl.length?'\n\nThe person pressed Highlight at these moments, so treat them as important:\n'+
+    hl.map(function(x){return '- '+x.text;}).join('\n'):'';
+  return 'You are summarizing a recorded conversation. The text came from speech-to-text, so some words may be misheard. Read for meaning, and never state a fact the transcript does not support.\n\n'+
+    tpl.hint+'\n\nReply with ONLY a JSON object, no code fences and no other text, shaped exactly like this:\n'+
+    '{"kind":"meeting|consult|call|interview|memo","title":"a short plain name for this note, under 8 words","headline":"one sentence under 15 words","tldr":"2-3 plain sentences","keyPoints":["..."],"decisions":["..."],"actionItems":[{"task":"...","owner":"name or Unassigned"}],"openQuestions":["..."]}\n'+
+    'Pick the "kind" that actually fits what you read. Use an empty array for anything that genuinely has nothing in it. Write in simple, everyday language.\n\n'+
+    'TRANSCRIPT:\n'+transcriptText(s).slice(0,80000)+hlText;
+}
+
+function summaryFor(s){
+  return callClaude(summaryPrompt(s),2000).then(function(raw){
+    var j=parseJSON(raw);
+    s.summary=j;
+    if(j.kind&&TEMPLATES[j.kind])s.tpl=j.kind;
+    if(s.autoTitle&&(j.title||j.headline)){
+      s.title=String(j.title||j.headline).replace(/^["']|["']$/g,'').slice(0,70);
+      delete s.autoTitle;
+    }
+    saveSessions();
+    return j;
+  });
+}
+
+function deepFor(s){
+  var names=(s.spkNames&&s.spkNames.length)?s.spkNames.join(', '):'unknown';
+  var prompt='Analyze this recorded conversation for someone who was in the room and wants to understand it better afterward. The text came from speech-to-text, so some words may be misheard. Never state a fact the transcript does not support. If something is your read rather than something said outright, word it as a read.\n\n'+
+    'Speaker labels in this transcript: '+names+'. If those labels are generic and people say their own or each other\'s names out loud, use the real names instead.\n\n'+
+    'Reply with ONLY a JSON object, no code fences and no other text:\n'+
+    '{"insights":[{"title":"short label","detail":"2-3 sentences on the pattern, why it matters, what it suggests"}],'+
+    '"tensions":["places where people wanted different things or quietly disagreed"],'+
+    '"gaps":["things that should have come up and never did"],'+
+    '"speakers":[{"name":"...","wanted":"what they were after","position":"where they stood and why","committed":"what they agreed to do, or None","tone":"how they came across"}],'+
+    '"questions":["a question the listener should ask to understand this better"]}\n\n'+
+    'Give 3-5 insights, 3-6 questions, and one entry per speaker. Use an empty array if a section genuinely has nothing. Write in simple, everyday language, no jargon.\n\n'+
+    'TRANSCRIPT:\n'+transcriptText(s).slice(0,80000);
+  return callClaude(prompt,4000).then(function(raw){
+    s.deep=parseJSON(raw);
+    if(s.deep.speakers&&s.deep.speakers.length&&s.spkNames&&s.spkNames.length>1){
+      var named=s.deep.speakers.map(function(x){return x.name;}).filter(Boolean);
+      if(named.length===s.spkNames.length)s.spkNames=named.slice(0,6);
+    }
+    saveSessions();
+    return s.deep;
+  });
+}
+
+function runPipeline(s,step){
+  step&&step('Writing the summary');
+  return summaryFor(s).then(function(){
+    step&&step('Reading between the lines');
+    return deepFor(s);
+  });
+}
+
+function makeSummary(){
+  var s=current();if(!s||!guard('sum'))return;
+  summaryFor(s).catch(function(e){
+    flash(e.message==='nokey'?'Add your Anthropic API key in Settings first.':'The summary did not come back. Check the API key and try again.','warn');
+  }).then(done);
+}
+
+function makeDeep(){
+  var s=current();if(!s||!guard('deep'))return;
+  deepFor(s).catch(function(e){
+    flash(e.message==='nokey'?'Add your Anthropic API key in Settings first.':'The analysis did not come back. Try again, or switch models in Settings.','warn');
+  }).then(done);
+}
+
+function sortSpeakers(){
+  var s=current();if(!s||!guard('sort'))return;
+  if(s.segs.length>MAX_SORT_LINES)flash('This one is long, so only the first '+MAX_SORT_LINES+' lines get sorted.','warn');
+  var lines=s.segs.slice(0,MAX_SORT_LINES);
+
+  var prompt='Below are numbered lines from a transcript, in order. They are not labeled by speaker.\n\n'+
+    'Work out who said each line. You cannot hear voices, so use what is in the words: questions and answers alternate, people introduce themselves ("I\'m Ryan"), people say each other\'s names ("Thanks, Cory"), and each person tends to own certain topics. If someone\'s real name is said out loud, use that name. Otherwise call them Speaker 1, Speaker 2 and so on.\n\n'+
+    'Reply with ONLY a JSON object, no code fences and no other text:\n'+
+    '{"names":["Ryan","Cory"],"lines":[0,1,0,0,1]}\n'+
+    'The "lines" array must hold exactly '+lines.length+' numbers, one per line in order, each an index into "names".\n\n'+
+    'LINES:\n'+lines.map(function(x,i){return (i+1)+'. '+x.text;}).join('\n').slice(0,80000);
+
+  callClaude(prompt,4000).then(function(raw){
+    var r=parseJSON(raw);
+    if(!r.names||!r.names.length||!r.lines||!r.lines.length)throw new Error('shape');
+    var n=r.names.slice(0,6);
+    for(var i=0;i<r.lines.length&&i<lines.length;i++){
+      var v=parseInt(r.lines[i],10);
+      lines[i].sp=(isNaN(v)||v<0||v>=n.length)?0:v;
+    }
+    s.spkNames=n;
+    saveSessions();
+    flash('Sorted into '+n.length+' speakers: '+n.join(', ')+'. It guessed from the wording, so check it over.');
+  }).catch(function(e){
+    flash(e.message==='nokey'?'Add your Anthropic API key in Settings first.':'Could not sort the speakers. Try again.','warn');
+  }).then(done);
+}
+
+function askQuestion(text){
+  var s=current();if(!s||busy)return;
+  var q=(text||'').trim();if(!q)return;
+  if(!apiKey){flash('Add your Anthropic API key in Settings first.','warn');return;}
+
+  s.chat.push({role:'user',text:q});saveSessions();
+  busy=true;busyWhat='ask';renderDetail();
+
+  var prior=s.chat.slice(0,-1).map(function(m){return (m.role==='user'?'Q: ':'A: ')+m.text;}).join('\n');
+  var prompt='Answer questions about this recorded conversation. Use only what is in the transcript. If the answer is not there, say so plainly. If you are reading between the lines, say that too. Keep answers short and simple.\n\n'+
+    'TRANSCRIPT:\n'+transcriptText(s).slice(0,80000)+'\n\n'+
+    (prior?'EARLIER IN THIS CHAT:\n'+prior+'\n\n':'')+'QUESTION: '+q;
+
+  callClaude(prompt,1200).then(function(ans){
+    s.chat.push({role:'assistant',text:ans.trim()});saveSessions();
+  }).catch(function(){
+    s.chat.push({role:'assistant',text:'That did not go through. Check the API key and ask again.'});saveSessions();
+  }).then(done);
+}
+
+/* ---------- export ---------- */
+function markdown(s){
+  var out='# '+s.title+'\n\n'+fmtDate(s.created)+' \u2014 '+fmt(s.secs)+'\n\n';
+  var sm=s.summary;
+  if(sm){
+    out+='## Summary\n'+(sm.headline?sm.headline+'\n\n':'')+(sm.tldr||'')+'\n\n';
+    if(sm.keyPoints&&sm.keyPoints.length)out+='## Key points\n'+sm.keyPoints.map(function(p){return '- '+p;}).join('\n')+'\n\n';
+    if(sm.decisions&&sm.decisions.length)out+='## Decisions\n'+sm.decisions.map(function(p){return '- '+p;}).join('\n')+'\n\n';
+    if(sm.actionItems&&sm.actionItems.length)out+='## To do\n'+sm.actionItems.map(function(a){return '- [ ] '+a.task+' \u2014 '+(a.owner||'Unassigned');}).join('\n')+'\n\n';
+    if(sm.openQuestions&&sm.openQuestions.length)out+='## Still open\n'+sm.openQuestions.map(function(p){return '- '+p;}).join('\n')+'\n\n';
+  }
+  var d=s.deep;
+  if(d){
+    if(d.insights&&d.insights.length)out+='## What stands out\n'+d.insights.map(function(i){return '**'+i.title+'** \u2014 '+i.detail;}).join('\n\n')+'\n\n';
+    if(d.tensions&&d.tensions.length)out+='## Where people did not line up\n'+d.tensions.map(function(p){return '- '+p;}).join('\n')+'\n\n';
+    if(d.gaps&&d.gaps.length)out+='## What never got covered\n'+d.gaps.map(function(p){return '- '+p;}).join('\n')+'\n\n';
+    if(d.speakers&&d.speakers.length){
+      out+='## People\n';
+      d.speakers.forEach(function(p){
+        out+='### '+(p.name||'Speaker')+'\n';
+        if(p.wanted)out+='- After: '+p.wanted+'\n';
+        if(p.position)out+='- Stood: '+p.position+'\n';
+        if(p.committed)out+='- Committed: '+p.committed+'\n';
+        if(p.tone)out+='- Came across: '+p.tone+'\n';
+        out+='\n';
+      });
+    }
+    if(d.questions&&d.questions.length)out+='## Questions worth asking\n'+d.questions.map(function(p){return '- '+p;}).join('\n')+'\n\n';
+  }
+  var hl=s.segs.filter(function(x){return x.mk;});
+  if(hl.length)out+='## Highlights\n'+hl.map(function(x){return '- ['+fmt(x.t)+'] '+x.text;}).join('\n')+'\n\n';
+  out+='## Transcript\n\n'+transcriptText(s)+'\n';
+  return out;
+}
+function copyText(t){
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(t).then(function(){flash('Copied to the clipboard.');},fallback);
+  else fallback();
+  function fallback(){
+    var ta=document.createElement('textarea');ta.value=t;
+    ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');flash('Copied to the clipboard.');}catch(e){flash('Could not copy.','warn');}
+    document.body.removeChild(ta);
+  }
+}
+
+/* ---------- views ---------- */
+function show(v){
+  ['viewRecord','viewImport','viewSave','viewLib','viewDetail'].forEach(function(id){$(id).classList.add('hide');});
+  $('tabRec').classList.remove('on');$('tabImp').classList.remove('on');$('tabLib').classList.remove('on');
+  if(v==='record'){$('viewRecord').classList.remove('hide');$('tabRec').classList.add('on');}
+  if(v==='import'){$('viewImport').classList.remove('hide');$('tabImp').classList.add('on');drawImpTpl();setImpMode(impMode);}
+  if(v==='save'){
+    $('viewSave').classList.remove('hide');$('tabRec').classList.add('on');drawSaveTpl();
+    $('saveBtn').textContent=pendingAudio?((prefs.auto&&apiKey)?'Make me a note':'Transcribe and save'):'Save note';
+  }
+  if(v==='lib'){$('viewLib').classList.remove('hide');$('tabLib').classList.add('on');renderLib();}
+  if(v==='detail'){$('viewDetail').classList.remove('hide');$('tabLib').classList.add('on');renderDetail();}
+  window.scrollTo(0,0);
+}
+
+function renderSpkNames(){
+  var h='';
+  for(var i=0;i<prefs.spkCount;i++)
+    h+='<input class="fld" data-i="'+i+'" value="'+esc(prefs.spkNames[i]||('Speaker '+(i+1)))+'" placeholder="Speaker '+(i+1)+'">';
+  $('spkNames').innerHTML=h;
+  Array.prototype.forEach.call($('spkNames').children,function(inp){
+    inp.oninput=function(){prefs.spkNames[parseInt(inp.getAttribute('data-i'),10)]=inp.value;savePrefs();updateSpeakerPad();};
+  });
+  $('spkCountLbl').textContent=prefs.spkCount;
+}
+
+function init(){
+  load();buildMeter();setMeter(0);
+
+  $('lang').innerHTML=LANGS.map(function(l){return '<option value="'+l[0]+'">'+l[1]+'</option>';}).join('');
+  $('lang').value=prefs.lang;$('model').value=prefs.model;$('apiKey').value=apiKey;
+  $('dgKey').value=dgKey;$('oaKey').value=oaKey;
+  if(dgKey||oaKey)impMode='audio';
+  var liveOK=hasWebSpeech&&!isIOS;
+  if(!liveOK&&prefs.capture!=='audio'){prefs.capture='audio';savePrefs();}
+  $('capBlock').classList.toggle('hide',!liveOK);
+  $('capNote').classList.toggle('hide',liveOK);
+  $('sttProvider').value=prefs.stt||'auto';
+  $('autoRun').checked=prefs.auto!==false;
+  setCapMode(prefs.capture||'live');
+  $('spkCount').value=prefs.spkCount;
+  renderSpkNames();updateSpeakerPad();
+
+  $('recBtn').onclick=function(){if(keepAlive)stopRec(false);else startRec();};
+  $('markBtn').onclick=function(){
+    if(prefs.capture==='audio'&&!segs.length){
+      markTimes.push(Math.floor((Date.now()-startMs)/1000));
+      flash('Marked at '+fmt(markTimes[markTimes.length-1])+'.');
+      return;
+    }
+    pendingMark=true;if(segs.length){segs[segs.length-1].mk=true;renderLive();}
+  };
+  $('spkBtn').onclick=function(){speaker=(speaker+1)%Math.max(1,prefs.spkCount);updateSpeakerPad();};
+
+  $('saveBtn').onclick=function(){
+    if(pendingAudio){
+      progTarget='sav';
+      runQueue([pendingAudio.blob],$('saveBtn'),function(made){
+        pendingAudio=null;$('clock').textContent='0:00';
+        if(made.length){activeId=made[0].id;dTab='summary';show('detail');}
+      });
+      return;
+    }
+    commitSave();
+  };
+  $('tossBtn').onclick=function(){
+    pending=null;pendingAudio=null;markTimes=[];segs=[];$('clock').textContent='0:00';renderLive();
+    try{localStorage.removeItem(KEY_DRAFT);}catch(e){}
+    show('record');
+  };
+  $('impBtn').onclick=doImport;
+  $('impAudioBtn').onclick=transcribeFile;
+  Array.prototype.forEach.call($('impMode').children,function(b){
+    b.onclick=function(){setImpMode(b.getAttribute('data-m'));};
+  });
+  $('impFile').onchange=function(){
+    var f=$('impFile').files&&$('impFile').files[0];
+    $('impFileInfo').textContent=f?(f.name+' \u00b7 '+humanSize(f.size)):'mp3, wav, m4a, webm, ogg or flac';
+  };
+  $('dgKey').oninput=function(){dgKey=$('dgKey').value.trim();try{localStorage.setItem(KEY_DG,dgKey);}catch(e){}};
+  $('oaKey').oninput=function(){oaKey=$('oaKey').value.trim();try{localStorage.setItem(KEY_OA,oaKey);}catch(e){}};
+
+  $('tabRec').onclick=function(){show(pending?'save':'record');};
+  $('tabImp').onclick=function(){show('import');};
+  $('tabLib').onclick=function(){activeId=null;show('lib');};
+  $('backBtn').onclick=function(){activeId=null;show('lib');};
+  $('search').oninput=renderLib;
+
+  $('copyBtn').onclick=function(){var s=current();if(s)copyText(markdown(s));};
+  $('delBtn').onclick=function(){
+    var s=current();if(!s)return;
+    if(!confirm('Delete "'+s.title+'"? This cannot be undone.'))return;
+    sessions=sessions.filter(function(x){return x.id!==s.id;});
+    saveSessions();activeId=null;show('lib');
+  };
+
+  $('gearBtn').onclick=function(){$('sheet').classList.remove('hide');};
+  $('closeSheet').onclick=function(){$('sheet').classList.add('hide');};
+  $('sheet').onclick=function(e){if(e.target===$('sheet'))$('sheet').classList.add('hide');};
+
+  $('apiKey').oninput=function(){apiKey=$('apiKey').value.trim();try{localStorage.setItem(KEY_API,apiKey);}catch(e){}setImpMode(impMode);};
+  $('model').onchange=function(){prefs.model=$('model').value;savePrefs();};
+  $('sttProvider').onchange=function(){prefs.stt=$('sttProvider').value;savePrefs();};
+  $('autoRun').onchange=function(){prefs.auto=$('autoRun').checked;savePrefs();setImpMode(impMode);};
+  $('capMode').onchange=function(){setCapMode($('capMode').value);};
+  $('lang').onchange=function(){prefs.lang=$('lang').value;savePrefs();};
+  $('spkCount').oninput=function(){prefs.spkCount=parseInt($('spkCount').value,10);savePrefs();renderSpkNames();updateSpeakerPad();};
+  $('wipeBtn').onclick=function(){
+    if(!confirm('Erase all notes, your API key and settings from this device?'))return;
+    try{localStorage.removeItem(KEY_SESSIONS);localStorage.removeItem(KEY_API);
+        localStorage.removeItem(KEY_PREFS);localStorage.removeItem(KEY_DRAFT);
+        localStorage.removeItem(KEY_DG);localStorage.removeItem(KEY_OA);}catch(e){}
+    location.reload();
+  };
+
+  window.addEventListener('beforeunload',function(e){if(keepAlive){e.preventDefault();e.returnValue='';}});
+
+  try{
+    var dr=JSON.parse(localStorage.getItem(KEY_DRAFT)||'null');
+    if(dr&&dr.segs&&dr.segs.length){
+      flash('A recording was interrupted. Its text was recovered \u2014 save it below.','warn');
+      segs=dr.segs;startMs=dr.start||Date.now();
+      pending={secs:Math.floor((Date.now()-startMs)/1000),segs:segs.slice()};
+      $('saveTitle').value='Recovered recording';
+      $('saveStats').textContent=segs.length+' lines recovered';
+      show('save');return;
+    }
+  }catch(e){}
+
+  if(!window.isSecureContext)
+    flash('Open this page over https or localhost, or the microphone will not turn on.','warn');
+  else if(isIOS)
+    flash('Set up for iPhone: hit record, and when you stop you get a written note with who said what.','warn');
+  else if(!hasWebSpeech)
+    flash('This browser can\'t show words live, so recordings get written up after you stop.','warn');
+
+  show('record');
+}
+
+document.addEventListener('DOMContentLoaded',init);
+})();
+</script>
+</body>
+</html>
