@@ -248,6 +248,11 @@
       Needed for summaries, insights and sorting speakers. Recording and transcribing work without it.
       The key sits on this device and goes straight to Anthropic. Get one at console.anthropic.com.
     </p>
+    <label class="lbl" for="aiUrl">Free AI link <span style="color:#9AA095">(optional)</span></label>
+    <input class="fld" id="aiUrl" type="password" placeholder="Paste the link from your setup" autocomplete="off">
+    <p style="font-size:12.5px;color:var(--muted);margin:7px 0 20px;line-height:1.5">
+      Sends summaries, insights and questions to your own free AI instead of Anthropic. With this set, no Anthropic key is needed. Keep the link private.
+    </p>
     <label class="lbl" for="dgKey">Deepgram key <span style="color:#9AA095">(audio files, splits speakers)</span></label>
     <input class="fld" id="dgKey" type="password" placeholder="optional" autocomplete="off" style="margin-bottom:14px">
     <label class="lbl" for="oaKey">OpenAI key <span style="color:#9AA095">(audio files, Whisper)</span></label>
@@ -326,7 +331,7 @@
 "use strict";
 
 var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
-var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince';
+var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince', KEY_AI='ont.aiurl';
 
 var TEMPLATES={
   meeting:{label:'Meeting',hint:'A work meeting. Focus on decisions made, who owns what, and dates.'},
@@ -346,7 +351,7 @@ var BARS=30, MAX_SORT_LINES=400;
 
 var sessions=[], prefs={lang:'en-US',model:'claude-sonnet-5',spkCount:1,capture:'live',stt:'auto',auto:true,
   spkNames:['Speaker 1','Speaker 2','Speaker 3','Speaker 4','Speaker 5','Speaker 6']};
-var apiKey='',dgKey='',oaKey='';
+var apiKey='',dgKey='',oaKey='',aiUrl='';
 var syncUrl='',syncing=false,lastCheck=0,pendingBusy=false;
 var impMode='text',uploading=false,pendingAudio=null,markTimes=[];
 var isIOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(/Mac/.test(navigator.userAgent)&&'ontouchend' in document);
@@ -380,6 +385,7 @@ function load(){
   try{dgKey=localStorage.getItem(KEY_DG)||'';}catch(e){}
   try{oaKey=localStorage.getItem(KEY_OA)||'';}catch(e){}
   try{syncUrl=localStorage.getItem(KEY_SYNC)||'';}catch(e){}
+  try{aiUrl=localStorage.getItem(KEY_AI)||'';}catch(e){}
   try{var p=JSON.parse(localStorage.getItem(KEY_PREFS)||'{}');
       for(var k in p){if(p[k]!==undefined&&p[k]!==null)prefs[k]=p[k];}}catch(e){}
 }
@@ -969,6 +975,15 @@ function addPlaudNote(n){
     tpl:'meeting',lang:prefs.lang,spkNames:names,segs:segs,
     summary:null,deep:null,chat:[],imported:true,source:'Plaud',pendingAuto:true
   };
+  if(p.summary&&typeof p.summary==='object'){
+    s.summary=p.summary;s.pendingAuto=false;
+    if(p.summary.kind&&TEMPLATES[p.summary.kind])s.tpl=p.summary.kind;
+    if(s.autoTitle&&(p.summary.title||p.summary.headline)){
+      s.title=String(p.summary.title||p.summary.headline).replace(/^["']|["']$/g,'').slice(0,70);
+      delete s.autoTitle;
+    }
+    if(p.deep&&typeof p.deep==='object')s.deep=p.deep;
+  }
   sessions.push(s);
   return s;
 }
@@ -1139,7 +1154,7 @@ function renderDetail(){
         '<p style="margin:0 0 16px;font-size:13px;color:var(--muted)">Claude reads the transcript and pulls out the points, decisions and to-dos.</p>'+
         '<button class="btn" id="sumBtn"'+(busy?' disabled':'')+'>'+
         ((busy&&busyWhat==='sum')?'<span class="spin"></span> Working':'Summarize this')+'</button>'+
-        (apiKey?'':'<p style="margin:14px 0 0;font-size:12.5px;color:var(--muted)">Add your Anthropic API key in Settings first.</p>')+'</div>';
+        ((apiKey||aiUrl)?'':'<p style="margin:14px 0 0;font-size:12.5px;color:var(--muted)">Add your Anthropic API key or Free AI link in Settings first.</p>')+'</div>';
     }else{
       var sm=s.summary;
       h+='<div class="card" style="border-left:6px solid var(--marker)">'+
@@ -1167,7 +1182,7 @@ function renderDetail(){
         '<p style="margin:0 0 16px;font-size:13px;color:var(--muted);line-height:1.55">Patterns, disagreements, what got skipped, and questions worth asking yourself afterward.</p>'+
         '<button class="btn" id="deepBtn"'+(busy?' disabled':'')+'>'+
         ((busy&&busyWhat==='deep')?'<span class="spin"></span> Thinking':'Analyze it')+'</button>'+
-        (apiKey?'':'<p style="margin:14px 0 0;font-size:12.5px;color:var(--muted)">Add your Anthropic API key in Settings first.</p>')+'</div>';
+        ((apiKey||aiUrl)?'':'<p style="margin:14px 0 0;font-size:12.5px;color:var(--muted)">Add your Anthropic API key or Free AI link in Settings first.</p>')+'</div>';
     }else{
       var d=s.deep;
       if(d.insights&&d.insights.length){
@@ -1262,11 +1277,14 @@ function section(title,items){
 
 /* ---------- Claude ---------- */
 function callClaude(prompt,maxTokens){
-  if(!apiKey)return Promise.reject(new Error('nokey'));
-  return fetch('https://api.anthropic.com/v1/messages',{
+  if(!apiKey&&!aiUrl)return Promise.reject(new Error('nokey'));
+  var url=aiUrl||'https://api.anthropic.com/v1/messages';
+  var hdrs={'content-type':'application/json'};
+  if(!aiUrl){hdrs['x-api-key']=apiKey;hdrs['anthropic-version']='2023-06-01';
+    hdrs['anthropic-dangerous-direct-browser-access']='true';}
+  return fetch(url,{
     method:'POST',
-    headers:{'content-type':'application/json','x-api-key':apiKey,
-      'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    headers:hdrs,
     body:JSON.stringify({model:prefs.model,max_tokens:maxTokens||2000,messages:[{role:'user',content:prompt}]})
   }).then(function(r){
     if(!r.ok)return r.text().then(function(t){throw new Error(t.slice(0,200));});
@@ -1282,7 +1300,7 @@ function parseJSON(raw){
 }
 function guard(what){
   if(busy)return false;
-  if(!apiKey){flash('Add your Anthropic API key in Settings first.','warn');return false;}
+  if(!apiKey&&!aiUrl){flash('Add your Anthropic API key or Free AI link in Settings first.','warn');return false;}
   busy=true;busyWhat=what;renderDetail();return true;
 }
 function done(){busy=false;busyWhat='';renderDetail();}
@@ -1347,7 +1365,7 @@ function runPipeline(s,step){
 function makeSummary(){
   var s=current();if(!s||!guard('sum'))return;
   summaryFor(s).catch(function(e){
-    flash(e.message==='nokey'?'Add your Anthropic API key in Settings first.':'The summary did not come back. Check the API key and try again.','warn');
+    flash(e.message==='nokey'?'Add your Anthropic API key or Free AI link in Settings first.':'The summary did not come back. Check Settings and try again.','warn');
   }).then(done);
 }
 
@@ -1484,7 +1502,7 @@ function init(){
 
   $('lang').innerHTML=LANGS.map(function(l){return '<option value="'+l[0]+'">'+l[1]+'</option>';}).join('');
   $('lang').value=prefs.lang;$('model').value=prefs.model;$('apiKey').value=apiKey;
-  $('dgKey').value=dgKey;$('oaKey').value=oaKey;$('syncUrl').value=syncUrl;
+  $('dgKey').value=dgKey;$('oaKey').value=oaKey;$('syncUrl').value=syncUrl;$('aiUrl').value=aiUrl;
   if(dgKey||oaKey)impMode='audio';
   var liveOK=hasWebSpeech&&!isIOS;
   if(!liveOK&&prefs.capture!=='audio'){prefs.capture='audio';savePrefs();}
@@ -1534,6 +1552,7 @@ function init(){
   };
   $('dgKey').oninput=function(){dgKey=$('dgKey').value.trim();try{localStorage.setItem(KEY_DG,dgKey);}catch(e){}};
   $('oaKey').oninput=function(){oaKey=$('oaKey').value.trim();try{localStorage.setItem(KEY_OA,oaKey);}catch(e){}};
+  $('aiUrl').oninput=function(){aiUrl=$('aiUrl').value.trim();try{localStorage.setItem(KEY_AI,aiUrl);}catch(e){}};
   $('syncUrl').onchange=function(){
     syncUrl=$('syncUrl').value.trim();
     try{localStorage.setItem(KEY_SYNC,syncUrl);localStorage.removeItem(KEY_SINCE);}catch(e){}
@@ -1575,7 +1594,8 @@ function init(){
     try{localStorage.removeItem(KEY_SESSIONS);localStorage.removeItem(KEY_API);
         localStorage.removeItem(KEY_PREFS);localStorage.removeItem(KEY_DRAFT);
         localStorage.removeItem(KEY_DG);localStorage.removeItem(KEY_OA);
-        localStorage.removeItem(KEY_SYNC);localStorage.removeItem(KEY_SINCE);}catch(e){}
+        localStorage.removeItem(KEY_SYNC);localStorage.removeItem(KEY_SINCE);
+        localStorage.removeItem(KEY_AI);}catch(e){}
     location.reload();
   };
 
