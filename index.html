@@ -206,6 +206,11 @@
   </section>
 
   <section id="viewLib" class="hide">
+    <div id="syncBar" class="hide" style="display:flex;align-items:center;justify-content:space-between;gap:10px;
+      border:1px solid var(--rule);background:#FAFBF7;border-radius:25px;padding:10px 12px 10px 18px;margin-bottom:12px">
+      <span id="syncTxt" style="font-size:13px;color:var(--muted)">Plaud</span>
+      <button class="btn sm ghost" id="syncBtn">Check now</button>
+    </div>
     <input class="fld" id="search" placeholder="Search every word you've recorded" style="margin-bottom:6px">
     <div id="libList"></div>
   </section>
@@ -278,6 +283,12 @@
       <option value="openai">Always OpenAI Whisper</option>
     </select>
 
+    <label class="lbl" for="syncUrl">Plaud sync link</label>
+    <input class="fld" id="syncUrl" type="password" placeholder="Paste the link from your setup" autocomplete="off">
+    <p style="font-size:12.5px;color:var(--muted);margin:7px 0 20px;line-height:1.5">
+      Pulls in recordings from your Plaud automatically. Keep this link private — anyone who has it can read your Plaud notes.
+    </p>
+
     <label class="lbl" for="model">Model</label>
     <select class="fld" id="model" style="margin-bottom:20px">
       <option value="claude-sonnet-5">Sonnet 5 — best balance</option>
@@ -315,7 +326,7 @@
 "use strict";
 
 var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
-var KEY_DG='ont.dgkey', KEY_OA='ont.oakey';
+var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince';
 
 var TEMPLATES={
   meeting:{label:'Meeting',hint:'A work meeting. Focus on decisions made, who owns what, and dates.'},
@@ -336,6 +347,7 @@ var BARS=30, MAX_SORT_LINES=400;
 var sessions=[], prefs={lang:'en-US',model:'claude-sonnet-5',spkCount:1,capture:'live',stt:'auto',auto:true,
   spkNames:['Speaker 1','Speaker 2','Speaker 3','Speaker 4','Speaker 5','Speaker 6']};
 var apiKey='',dgKey='',oaKey='';
+var syncUrl='',syncing=false,lastCheck=0,pendingBusy=false;
 var impMode='text',uploading=false,pendingAudio=null,markTimes=[];
 var isIOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(/Mac/.test(navigator.userAgent)&&'ontouchend' in document);
 var hasWebSpeech=!!(window.SpeechRecognition||window.webkitSpeechRecognition);
@@ -367,6 +379,7 @@ function load(){
   try{apiKey=localStorage.getItem(KEY_API)||'';}catch(e){}
   try{dgKey=localStorage.getItem(KEY_DG)||'';}catch(e){}
   try{oaKey=localStorage.getItem(KEY_OA)||'';}catch(e){}
+  try{syncUrl=localStorage.getItem(KEY_SYNC)||'';}catch(e){}
   try{var p=JSON.parse(localStorage.getItem(KEY_PREFS)||'{}');
       for(var k in p){if(p[k]!==undefined&&p[k]!==null)prefs[k]=p[k];}}catch(e){}
 }
@@ -890,9 +903,10 @@ function setCapMode(m){
     $('spkAutoNote').classList.toggle('hide',m!=='audio');
   }
   if(!keepAlive){
-    $('hint').textContent = (m==='audio')
+    $('hint').textContent = ((m==='audio')
       ? 'Tap the red button. When you stop, you get a written note.'
-      : 'Tap the red button. Words appear here as you talk.';
+      : 'Tap the red button. Words appear here as you talk.')
+      + (syncUrl?' This records with this phone’s mic — your Plaud is separate and records on its own.':'');
   }
 }
 
@@ -906,6 +920,128 @@ function setImpMode(m){
   Array.prototype.forEach.call($('impMode').children,function(b){
     b.classList.toggle('on',b.getAttribute('data-m')===m);
   });
+}
+
+
+/* ---------- Plaud sync (via n8n) ---------- */
+function ago(ms){
+  var s=Math.floor((Date.now()-ms)/1000);
+  if(s<45)return 'just now';
+  if(s<3600)return Math.round(s/60)+' min ago';
+  if(s<86400)return Math.round(s/3600)+' hr ago';
+  return Math.round(s/86400)+' days ago';
+}
+
+function renderSyncBar(){
+  var bar=$('syncBar');if(!bar)return;
+  bar.classList.toggle('hide',!syncUrl);
+  if(!syncUrl)return;
+  var t;
+  if(syncing)t='Checking your Plaud\u2026';
+  else if(pendingBusy)t='Writing up new Plaud recordings\u2026';
+  else if(lastCheck)t='Plaud checked '+ago(lastCheck);
+  else t='Plaud connected';
+  $('syncTxt').textContent=t;
+  $('syncBtn').disabled=syncing||pendingBusy;
+}
+
+function looksDefaultName(t){
+  t=String(t||'');
+  return (t.replace(/[^A-Za-z]/g,'').length<3);
+}
+
+function addPlaudNote(n){
+  if(!n||!n.id||String(n.id).indexOf('__')===0)return null;
+  var id='plaud_'+n.id;
+  for(var i=0;i<sessions.length;i++)if(sessions[i].id===id)return null;
+  var p;try{p=JSON.parse(n.payload);}catch(e){return null;}
+  var segs=(p.segs||[]).map(function(x){
+    return {id:uid(),sp:Math.min(Math.max(0,parseInt(x.sp,10)||0),5),t:Math.max(0,parseInt(x.t,10)||0),
+            text:String(x.text||'').trim(),mk:!!x.mk};
+  }).filter(function(x){return x.text;});
+  if(!segs.length)return null;
+  var names=(p.spkNames&&p.spkNames.length)?p.spkNames.slice(0,6):['Speaker 1'];
+  var title=p.title||n.title||'Plaud recording';
+  var s={
+    id:id,title:title,autoTitle:looksDefaultName(title),
+    created:Date.parse(p.created||n.recorded_at)||Date.now(),
+    secs:parseInt(p.secs,10)||segs[segs.length-1].t,
+    tpl:'meeting',lang:prefs.lang,spkNames:names,segs:segs,
+    summary:null,deep:null,chat:[],imported:true,source:'Plaud',pendingAuto:true
+  };
+  sessions.push(s);
+  return s;
+}
+
+function syncPlaud(manual){
+  if(!syncUrl||syncing)return;
+  syncing=true;renderSyncBar();
+  var since='';try{since=localStorage.getItem(KEY_SINCE)||'';}catch(e){}
+  var added=0,pages=0,waits=0;
+
+  function pause(ms){return new Promise(function(r){setTimeout(r,ms);});}
+
+  function page(s){
+    pages++;
+    var u=syncUrl+(syncUrl.indexOf('?')>-1?'&':'?')+'since='+encodeURIComponent(s||'')+'&_='+Date.now();
+    return fetch(u).then(function(r){
+      if(!r.ok)throw new Error('status '+r.status);
+      return r.json();
+    }).then(function(d){
+      var got=0;
+      (d.notes||[]).forEach(function(n){if(addPlaudNote(n)){added++;got++;}});
+      if(got){
+        sessions.sort(function(a,b){return b.created-a.created;});
+        saveSessions();refreshOpenView();
+      }
+      if(d.latest){s=d.latest;try{localStorage.setItem(KEY_SINCE,s);}catch(e){}}
+      if(d.more&&d.latest&&pages<20)return page(s);
+      // the server is still turning a recording into text: wait and ask again
+      if(d.checking&&waits<10){
+        waits++;
+        $('syncTxt').textContent='Getting a new recording from your Plaud\u2026';
+        return pause(15000).then(function(){return page(s);});
+      }
+    });
+  }
+
+  page(since).then(function(){
+    syncing=false;lastCheck=Date.now();
+    if(added){
+      sessions.sort(function(a,b){return b.created-a.created;});
+      saveSessions();
+      flash(added===1?'1 new recording came in from your Plaud.':added+' new recordings came in from your Plaud.');
+    }else if(manual)flash('Nothing new from your Plaud yet.');
+    refreshOpenView();
+    processPending();
+  }).catch(function(){
+    syncing=false;lastCheck=Date.now();
+    if(manual)flash('Could not reach your Plaud sync. Check the link in Settings and your connection.','warn');
+    refreshOpenView();
+  });
+}
+
+function processPending(){
+  if(pendingBusy||!prefs.auto||!apiKey)return;
+  var list=sessions.filter(function(s){return s.pendingAuto&&!s.summary;});
+  if(!list.length)return;
+  pendingBusy=true;renderSyncBar();
+  var i=0;
+  (function next(){
+    if(i>=list.length){pendingBusy=false;refreshOpenView();return;}
+    var s=list[i++];
+    runPipeline(s).then(function(){
+      delete s.pendingAuto;saveSessions();refreshOpenView();next();
+    }).catch(function(){
+      pendingBusy=false;refreshOpenView();
+    });
+  })();
+}
+
+function refreshOpenView(){
+  renderSyncBar();
+  if(!$('viewLib').classList.contains('hide'))renderLib();
+  if(!$('viewDetail').classList.contains('hide')&&!busy)renderDetail();
 }
 
 /* ---------- save ---------- */
@@ -936,6 +1072,7 @@ function commitSave(){
 
 /* ---------- library ---------- */
 function renderLib(){
+  renderSyncBar();
   var q=($('search').value||'').toLowerCase().trim();
   var list=sessions.filter(function(s){
     if(!q)return true;
@@ -943,6 +1080,7 @@ function renderLib(){
     if(s.summary&&JSON.stringify(s.summary).toLowerCase().indexOf(q)>-1)return true;
     return s.segs.some(function(x){return x.text.toLowerCase().indexOf(q)>-1;});
   });
+  list.sort(function(a,b){return b.created-a.created;});
   if(!list.length){
     $('libList').innerHTML='<div class="empty">'+(sessions.length?'Nothing matches that search.':'No notes yet. Record something or import a transcript.')+'</div>';
     return;
@@ -955,7 +1093,8 @@ function renderLib(){
       (marks?'<span>'+marks+' highlighted</span>':'')+
       (s.summary?'<span>summarized</span>':'')+
       (s.deep?'<span>analyzed</span>':'')+
-      (s.imported?'<span>imported</span>':'')+'</div></button>';
+      (s.source==='Plaud'?'<span>from Plaud</span>':(s.imported?'<span>imported</span>':''))+
+      (s.pendingAuto&&!s.summary?'<span>writing up\u2026</span>':'')+'</div></button>';
   });
   $('libList').innerHTML=h;
   Array.prototype.forEach.call($('libList').children,function(b){
@@ -1345,7 +1484,7 @@ function init(){
 
   $('lang').innerHTML=LANGS.map(function(l){return '<option value="'+l[0]+'">'+l[1]+'</option>';}).join('');
   $('lang').value=prefs.lang;$('model').value=prefs.model;$('apiKey').value=apiKey;
-  $('dgKey').value=dgKey;$('oaKey').value=oaKey;
+  $('dgKey').value=dgKey;$('oaKey').value=oaKey;$('syncUrl').value=syncUrl;
   if(dgKey||oaKey)impMode='audio';
   var liveOK=hasWebSpeech&&!isIOS;
   if(!liveOK&&prefs.capture!=='audio'){prefs.capture='audio';savePrefs();}
@@ -1395,10 +1534,20 @@ function init(){
   };
   $('dgKey').oninput=function(){dgKey=$('dgKey').value.trim();try{localStorage.setItem(KEY_DG,dgKey);}catch(e){}};
   $('oaKey').oninput=function(){oaKey=$('oaKey').value.trim();try{localStorage.setItem(KEY_OA,oaKey);}catch(e){}};
+  $('syncUrl').onchange=function(){
+    syncUrl=$('syncUrl').value.trim();
+    try{localStorage.setItem(KEY_SYNC,syncUrl);localStorage.removeItem(KEY_SINCE);}catch(e){}
+    renderSyncBar();setCapMode(prefs.capture||'audio');
+    if(syncUrl)syncPlaud(true);
+  };
+  $('syncBtn').onclick=function(){syncPlaud(true);};
+  document.addEventListener('visibilitychange',function(){
+    if(document.visibilityState==='visible'&&syncUrl&&Date.now()-lastCheck>60000)syncPlaud(false);
+  });
 
   $('tabRec').onclick=function(){show(pending?'save':'record');};
   $('tabImp').onclick=function(){show('import');};
-  $('tabLib').onclick=function(){activeId=null;show('lib');};
+  $('tabLib').onclick=function(){activeId=null;show('lib');if(syncUrl&&Date.now()-lastCheck>30000)syncPlaud(false);};
   $('backBtn').onclick=function(){activeId=null;show('lib');};
   $('search').oninput=renderLib;
 
@@ -1425,7 +1574,8 @@ function init(){
     if(!confirm('Erase all notes, your API key and settings from this device?'))return;
     try{localStorage.removeItem(KEY_SESSIONS);localStorage.removeItem(KEY_API);
         localStorage.removeItem(KEY_PREFS);localStorage.removeItem(KEY_DRAFT);
-        localStorage.removeItem(KEY_DG);localStorage.removeItem(KEY_OA);}catch(e){}
+        localStorage.removeItem(KEY_DG);localStorage.removeItem(KEY_OA);
+        localStorage.removeItem(KEY_SYNC);localStorage.removeItem(KEY_SINCE);}catch(e){}
     location.reload();
   };
 
@@ -1451,6 +1601,8 @@ function init(){
     flash('This browser can\'t show words live, so recordings get written up after you stop.','warn');
 
   show('record');
+  if(syncUrl)setTimeout(function(){syncPlaud(false);},400);
+  processPending();
 }
 
 document.addEventListener('DOMContentLoaded',init);
