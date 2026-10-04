@@ -51,6 +51,8 @@
   .line{font-family:var(--serif);font-size:17px;line-height:1.62;margin:0 0 11px;max-width:62ch}
   .line .mk{background:linear-gradient(transparent 58%,var(--marker) 58%);padding:0 1px}
   .who{font-family:var(--sans);font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;margin-right:6px;white-space:nowrap}
+  button.who{color:var(--ink);line-height:1.5;vertical-align:1px}
+  .chip .swatch{display:inline-block;margin-right:7px;vertical-align:1px}
   .ts{font-family:var(--mono);font-size:10.5px;color:#A2A79C;margin-right:7px}
   .interim{font-family:var(--serif);font-size:17px;line-height:1.62;color:#9DA298;font-style:italic}
 
@@ -326,6 +328,23 @@
   </div>
 </div>
 
+<div class="sheet hide" id="nameSheet">
+  <div class="body">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <strong style="font-size:17px" id="nameTitle">Who is this?</strong>
+      <button class="btn sm ghost" id="nameClose">Cancel</button>
+    </div>
+    <label class="lbl" for="nameInput">Name</label>
+    <input class="fld" id="nameInput" type="text" maxlength="40" placeholder="Their name" autocomplete="off" autocapitalize="words">
+    <p class="hintp" id="nameHint"></p>
+    <div class="flash warn hide" id="nameMsg"></div>
+    <div style="display:flex;gap:8px;margin-top:18px">
+      <button class="btn" id="nameSave">Save</button>
+      <button class="btn ghost" id="nameClear">Clear</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
 "use strict";
@@ -347,6 +366,8 @@ var LANGS=[['en-US','English (US)'],['en-GB','English (UK)'],['es-US','Spanish (
  ['hi-IN','Hindi'],['ar-SA','Arabic'],['vi-VN','Vietnamese'],['tr-TR','Turkish']];
 
 var SPK_COLORS=['#DCE6DA','#DFE3EF','#F2E4D4','#E6DFEC','#DDE9EA','#EFE0E0'];
+// Write-ups use the speaker labels exactly as given and never guess who someone is (same rule on the mini).
+var LABEL_RULE='Refer to each speaker only by the label shown before their lines (for example "Speaker 2"), exactly as written. Never guess or work out the real name behind a label, even if names are said out loud.';
 var BARS=30, MAX_SORT_LINES=400;
 
 var sessions=[], prefs={lang:'en-US',model:'claude-sonnet-5',spkCount:1,capture:'live',stt:'auto',auto:true,
@@ -597,7 +618,6 @@ function parseTranscript(raw){
   function nameIdx(n){
     n=n.trim();
     for(var i=0;i<names.length;i++) if(names[i].toLowerCase()===n.toLowerCase()) return i;
-    if(names.length>=6) return 0;
     names.push(n);return names.length-1;
   }
   function toSecs(str){
@@ -718,7 +738,7 @@ function parseDeepgram(d){
   }
   var segs=[],cur=null,lastEnd=0,maxSp=0;
   words.forEach(function(w){
-    var sp=(typeof w.speaker==='number')?Math.min(w.speaker,5):0;
+    var sp=(typeof w.speaker==='number')?Math.max(0,w.speaker):0;
     if(sp>maxSp)maxSp=sp;
     var txt=w.punctuated_word||w.word||'';
     var gap=(w.start||0)-lastEnd;
@@ -962,11 +982,11 @@ function addPlaudNote(n){
   for(var i=0;i<sessions.length;i++)if(sessions[i].id===id)return null;
   var p;try{p=JSON.parse(n.payload);}catch(e){return null;}
   var segs=(p.segs||[]).map(function(x){
-    return {id:uid(),sp:Math.min(Math.max(0,parseInt(x.sp,10)||0),5),t:Math.max(0,parseInt(x.t,10)||0),
+    return {id:uid(),sp:Math.max(0,parseInt(x.sp,10)||0),t:Math.max(0,parseInt(x.t,10)||0),
             text:String(x.text||'').trim(),mk:!!x.mk};
   }).filter(function(x){return x.text;});
   if(!segs.length)return null;
-  var names=(p.spkNames&&p.spkNames.length)?p.spkNames.slice(0,6):['Speaker 1'];
+  var names=(p.spkNames&&p.spkNames.length)?p.spkNames.map(function(x){return String(x||'');}):['Speaker 1'];
   var title=p.title||n.title||'Plaud recording';
   var s={
     id:id,title:title,autoTitle:looksDefaultName(title),
@@ -992,7 +1012,7 @@ function syncPlaud(manual){
   if(!syncUrl||syncing)return;
   syncing=true;renderSyncBar();
   var since='';try{since=localStorage.getItem(KEY_SINCE)||'';}catch(e){}
-  var added=0,pages=0,waits=0;
+  var added=0,pages=0,waits=0,signinWarned=false;
 
   function pause(ms){return new Promise(function(r){setTimeout(r,ms);});}
 
@@ -1004,6 +1024,8 @@ function syncPlaud(manual){
       return r.json();
     }).then(function(d){
       var got=0;
+      // the mini renews the Plaud sign-in itself; when that fails it says so here
+      if(d.signin==='expired'&&!signinWarned){signinWarned=true;flash('Plaud sign-in expired. Sign in again at the mini.','warn');}
       (d.notes||[]).forEach(function(n){if(addPlaudNote(n)){added++;got++;}});
       if(got){
         sessions.sort(function(a,b){return b.created-a.created;});
@@ -1220,13 +1242,22 @@ function renderDetail(){
   }
 
   if(dTab==='transcript'){
-    h='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'+
+    var nsp=speakerCount(s),fromPlaud=s.source==='Plaud';
+    h='';
+    if(fromPlaud||nsp>1){
+      h+='<p class="hintp" style="margin:0 0 9px">Tap a speaker to name them.</p><div class="row" style="margin-bottom:14px">';
+      for(var k=0;k<nsp;k++)h+='<button class="chip" data-sp="'+k+'"><span class="swatch" style="background:'+
+        SPK_COLORS[k%SPK_COLORS.length]+'"></span>'+esc(spkLabel(s,k))+'</button>';
+      h+='</div>';
+    }
+    // Plaud notes arrive split by voice on the mini; sorting by wording would undo that.
+    if(!fromPlaud)h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'+
       '<button class="btn sm ghost" id="sortBtn"'+(busy?' disabled':'')+'>'+
-      ((busy&&busyWhat==='sort')?'<span class="spin"></span> Sorting':'Sort out who said what')+'</button></div>'+
-      '<div class="page">'+s.segs.map(function(x){
+      ((busy&&busyWhat==='sort')?'<span class="spin"></span> Sorting':'Sort out who said what')+'</button></div>';
+    h+='<div class="page">'+s.segs.map(function(x){
         return '<p class="line"><span class="ts">'+fmt(x.t)+'</span>'+
-          ((s.spkNames&&s.spkNames.length>1)?'<span class="who" style="background:'+SPK_COLORS[x.sp%SPK_COLORS.length]+'">'+
-            esc(s.spkNames[x.sp]||('Speaker '+(x.sp+1)))+'</span>':'')+
+          (nsp>1?'<button class="who" data-sp="'+x.sp+'" style="background:'+SPK_COLORS[x.sp%SPK_COLORS.length]+'">'+
+            esc(spkLabel(s,x.sp))+'</button>':'')+
           (x.mk?'<span class="mk">':'')+esc(x.text)+(x.mk?'</span>':'')+'</p>';
       }).join('')+'</div>';
   }
@@ -1247,10 +1278,14 @@ function renderDetail(){
     h+='</div><div style="display:flex;gap:8px;margin-top:12px">'+
       '<input class="fld" id="qInput" placeholder="Ask a question" style="flex:1">'+
       '<button class="btn" id="askBtn"'+(busy?' disabled':'')+'>Ask</button></div>'+
-      (apiKey?'':'<p style="font-size:12.5px;color:var(--muted);margin-top:10px">Add your Anthropic API key in Settings to use this.</p>');
+      ((apiKey||aiUrl)?'':'<p style="font-size:12.5px;color:var(--muted);margin-top:10px">Add your Anthropic API key or Free AI link in Settings to use this.</p>');
   }
 
   $('dBody').innerHTML=h;
+
+  Array.prototype.forEach.call(document.querySelectorAll('#dBody [data-sp]'),function(b){
+    b.onclick=function(){openNameSheet(parseInt(b.getAttribute('data-sp'),10));};
+  });
 
   if($('sumBtn'))  $('sumBtn').onclick=makeSummary;
   if($('deepBtn')) $('deepBtn').onclick=makeDeep;
@@ -1273,6 +1308,129 @@ function section(title,items){
   if(!items||!items.length)return '';
   return '<h2 class="sec">'+esc(title)+'</h2><ul class="pts">'+
     items.map(function(p){return '<li>'+esc(p)+'</li>';}).join('')+'</ul>';
+}
+
+/* ---------- speaker labels and naming ---------- */
+// A speaker is "Speaker N" until Cory names them. Nothing here guesses a name.
+function spkLabel(s,i){return (s.spkNames&&s.spkNames[i])||('Speaker '+(i+1));}
+function speakerCount(s){
+  var n=(s.spkNames||[]).length;
+  (s.segs||[]).forEach(function(x){if(x.sp+1>n)n=x.sp+1;});
+  return Math.max(1,n);
+}
+function noteLabels(s){var out=[],n=speakerCount(s);for(var i=0;i<n;i++)out.push(spkLabel(s,i));return out;}
+function reEsc(t){return String(t).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
+// whole-word match of a label: "Speaker 1" never matches inside "Speaker 10"
+function wordRe(label,flags){return new RegExp('(^|[^\\p{L}\\p{N}_])('+reEsc(label)+')(?![\\p{L}\\p{N}_])',flags||'iu');}
+function swapLabel(v,from,to){
+  if(v==null||!from||from===to)return v;
+  if(typeof v==='string')return v.replace(wordRe(from,'giu'),function(m,pre){return pre+to;});
+  if(Array.isArray(v))return v.map(function(x){return swapLabel(x,from,to);});
+  if(typeof v==='object'){
+    var o={};for(var k in v)if(Object.prototype.hasOwnProperty.call(v,k))o[k]=swapLabel(v[k],from,to);
+    return o;
+  }
+  return v;
+}
+// The People list shows the write-up's speaker names. A name that is not one of this note's
+// labels is a guess, so it never shows: it becomes the label it mentions, or "Not sure which speaker".
+function labelFor(name,labels){
+  var n=String(name||'').trim(),i,hits=[];
+  for(i=0;i<labels.length;i++)if(labels[i].toLowerCase()===n.toLowerCase())return labels[i];
+  for(i=0;i<labels.length;i++)if(wordRe(labels[i]).test(n)&&hits.indexOf(labels[i])<0)hits.push(labels[i]);
+  if(hits.length===1)return hits[0];
+  var m=n.match(/^speaker\s*(\d+)$/i);
+  if(m&&labels[+m[1]-1])return labels[+m[1]-1];
+  return 'Not sure which speaker';
+}
+function cleanDeep(d,labels){
+  if(d&&d.speakers&&d.speakers.length)d.speakers.forEach(function(p){if(p&&typeof p==='object')p.name=labelFor(p.name,labels);});
+  return d;
+}
+// Put a new label on one speaker of one note, and in its write-up text (no AI re-run).
+function applyLabel(s,sp,label){
+  var labels=noteLabels(s),old=labels[sp],shared=false,i;
+  labels[sp]=label;
+  for(i=0;i<labels.length;i++)if(i!==sp&&labels[i]===old)shared=true;
+  if(old!==label&&!shared){
+    if(s.summary)s.summary=swapLabel(s.summary,old,label);
+    if(s.deep)s.deep=swapLabel(s.deep,old,label);
+  }
+  s.spkNames=labels;
+  saveSessions();
+}
+// The naming link sits next to the sync link: .../notetaker-sync -> .../notetaker-name
+function nameUrl(){
+  var re=/\/notetaker-sync(?=$|[?#])/;
+  return re.test(syncUrl)?syncUrl.replace(re,'/notetaker-name'):'';
+}
+
+var nameCtx=null;
+function showNameMsg(t){$('nameMsg').textContent=t||'';$('nameMsg').classList.toggle('hide',!t);}
+function setNameBusy(b){
+  $('nameSave').disabled=b;$('nameClear').disabled=b;$('nameInput').disabled=b;
+  $('nameSave').innerHTML=b?'<span class="spin"></span> Saving':'Save';
+}
+function closeNameSheet(){nameCtx=null;$('nameSheet').classList.add('hide');}
+function openNameSheet(sp){
+  var s=current();if(!s||isNaN(sp))return;
+  var lab=spkLabel(s,sp),generic=/^speaker\s*\d+$/i.test(lab);
+  nameCtx={id:s.id,sp:sp};
+  $('nameTitle').textContent=generic?'Who is '+lab+'?':'Rename '+lab;
+  $('nameInput').value=generic?'':lab;
+  $('nameClear').classList.toggle('hide',generic);
+  $('nameHint').textContent=s.source==='Plaud'?
+    'Saving teaches the mini this voice. Later recordings show a name only when the voice clearly matches. Otherwise they say Speaker 1, 2, 3.':
+    'This changes the name in this note only. Voice learning works on Plaud recordings.';
+  showNameMsg('');setNameBusy(false);
+  $('nameSheet').classList.remove('hide');
+  setTimeout(function(){try{$('nameInput').focus();}catch(e){}},60);
+}
+function nameSaid(d,nm,sp){
+  if(d.why==='learned')return 'Saved as '+nm+'. Later recordings use this name when the voice clearly matches.';
+  if(d.why==='cleared')return 'Cleared. This is Speaker '+(sp+1)+' again.';
+  if(d.why==='old')return 'Named '+nm+' in this note. This recording came in before voice learning, so it can’t learn this voice.';
+  if(d.why==='short')return 'Named '+nm+' in this note. There was too little clear speech from this person to learn the voice.';
+  return 'Named '+nm+' in this note. The voice was not learned.';
+}
+function saveName(clear){
+  if(!nameCtx)return;
+  var ctx=nameCtx,s=null,i;
+  for(i=0;i<sessions.length;i++)if(sessions[i].id===ctx.id)s=sessions[i];
+  if(!s)return closeNameSheet();
+  var nm=clear?'':String($('nameInput').value||'').replace(/\s+/g,' ').trim().slice(0,40);
+  if(/^speaker\s*\d+$/i.test(nm))nm='';
+  if(!clear&&!nm){showNameMsg('Type a name first, or tap Cancel.');return;}
+  var label=nm||('Speaker '+(ctx.sp+1));
+  if(s.source!=='Plaud'){
+    applyLabel(s,ctx.sp,label);closeNameSheet();renderDetail();
+    flash(nm?'Named '+nm+' in this note.':'Back to Speaker '+(ctx.sp+1)+'.');
+    return;
+  }
+  var url=nameUrl();
+  if(!url){showNameMsg('Naming needs the Plaud sync link in Settings.');return;}
+  setNameBusy(true);showNameMsg('');
+  var ac=window.AbortController?new AbortController():null;
+  var timer=setTimeout(function(){if(ac)ac.abort();},30000);
+  fetch(url,{method:'POST',headers:{'content-type':'application/json'},signal:ac?ac.signal:undefined,
+    body:JSON.stringify({note:String(s.id).replace(/^plaud_/,''),speaker:ctx.sp,name:nm})
+  }).then(function(r){
+    if(!r.ok)throw new Error('status '+r.status);
+    return r.json();
+  }).then(function(d){
+    clearTimeout(timer);setNameBusy(false);
+    if(!d||!d.ok){
+      showNameMsg(d&&d.error==='unknown note'?'The mini does not have this recording, so nothing changed.':'The mini could not save that. Try again.');
+      return;
+    }
+    applyLabel(s,ctx.sp,d.label||label);
+    if(nameCtx===ctx)closeNameSheet();
+    if(activeId===s.id&&!$('viewDetail').classList.contains('hide'))renderDetail();
+    flash(nameSaid(d,nm,ctx.sp));
+  }).catch(function(){
+    clearTimeout(timer);setNameBusy(false);
+    showNameMsg('Could not reach the mini, so nothing changed. Check your connection and try again.');
+  });
 }
 
 /* ---------- Claude ---------- */
@@ -1311,7 +1469,8 @@ function summaryPrompt(s){
   var hlText=hl.length?'\n\nThe person pressed Highlight at these moments, so treat them as important:\n'+
     hl.map(function(x){return '- '+x.text;}).join('\n'):'';
   return 'You are summarizing a recorded conversation. The text came from speech-to-text, so some words may be misheard. Read for meaning, and never state a fact the transcript does not support.\n\n'+
-    tpl.hint+'\n\nReply with ONLY a JSON object, no code fences and no other text, shaped exactly like this:\n'+
+    tpl.hint+'\n\n'+LABEL_RULE+' For an owner, use that label, or a name only when the words themselves say that named person will do it, or "Unassigned".'+
+    '\n\nReply with ONLY a JSON object, no code fences and no other text, shaped exactly like this:\n'+
     '{"kind":"meeting|consult|call|interview|memo","title":"a short plain name for this note, under 8 words","headline":"one sentence under 15 words","tldr":"2-3 plain sentences","keyPoints":["..."],"decisions":["..."],"actionItems":[{"task":"...","owner":"name or Unassigned"}],"openQuestions":["..."]}\n'+
     'Pick the "kind" that actually fits what you read. Use an empty array for anything that genuinely has nothing in it. Write in simple, everyday language.\n\n'+
     'TRANSCRIPT:\n'+transcriptText(s).slice(0,80000)+hlText;
@@ -1332,9 +1491,9 @@ function summaryFor(s){
 }
 
 function deepFor(s){
-  var names=(s.spkNames&&s.spkNames.length)?s.spkNames.join(', '):'unknown';
+  var labels=noteLabels(s);
   var prompt='Analyze this recorded conversation for someone who was in the room and wants to understand it better afterward. The text came from speech-to-text, so some words may be misheard. Never state a fact the transcript does not support. If something is your read rather than something said outright, word it as a read.\n\n'+
-    'Speaker labels in this transcript: '+names+'. If those labels are generic and people say their own or each other\'s names out loud, use the real names instead.\n\n'+
+    'Speaker labels in this transcript: '+labels.join(', ')+'. '+LABEL_RULE+' The "name" of each "speakers" entry must be one of these labels, exactly.\n\n'+
     'Reply with ONLY a JSON object, no code fences and no other text:\n'+
     '{"insights":[{"title":"short label","detail":"2-3 sentences on the pattern, why it matters, what it suggests"}],'+
     '"tensions":["places where people wanted different things or quietly disagreed"],'+
@@ -1344,11 +1503,8 @@ function deepFor(s){
     'Give 3-5 insights, 3-6 questions, and one entry per speaker. Use an empty array if a section genuinely has nothing. Write in simple, everyday language, no jargon.\n\n'+
     'TRANSCRIPT:\n'+transcriptText(s).slice(0,80000);
   return callClaude(prompt,4000).then(function(raw){
-    s.deep=parseJSON(raw);
-    if(s.deep.speakers&&s.deep.speakers.length&&s.spkNames&&s.spkNames.length>1){
-      var named=s.deep.speakers.map(function(x){return x.name;}).filter(Boolean);
-      if(named.length===s.spkNames.length)s.spkNames=named.slice(0,6);
-    }
+    // the AI never names anyone: its speaker entries keep this note's labels
+    s.deep=cleanDeep(parseJSON(raw),labels);
     saveSessions();
     return s.deep;
   });
@@ -1382,23 +1538,32 @@ function sortSpeakers(){
   var lines=s.segs.slice(0,MAX_SORT_LINES);
 
   var prompt='Below are numbered lines from a transcript, in order. They are not labeled by speaker.\n\n'+
-    'Work out who said each line. You cannot hear voices, so use what is in the words: questions and answers alternate, people introduce themselves ("I\'m Ryan"), people say each other\'s names ("Thanks, Cory"), and each person tends to own certain topics. If someone\'s real name is said out loud, use that name. Otherwise call them Speaker 1, Speaker 2 and so on.\n\n'+
+    'Work out which lines were said by the same person. You cannot hear voices, so use what is in the words: questions and answers alternate, people introduce themselves, people say each other\'s names, and each person tends to own certain topics. '+
+    'Number the people in the order they first speak. Never use or guess real names, even if a name is said out loud.\n\n'+
     'Reply with ONLY a JSON object, no code fences and no other text:\n'+
-    '{"names":["Ryan","Cory"],"lines":[0,1,0,0,1]}\n'+
-    'The "lines" array must hold exactly '+lines.length+' numbers, one per line in order, each an index into "names".\n\n'+
+    '{"speakers":2,"lines":[0,1,0,0,1]}\n'+
+    '"speakers" is how many different people talk. The "lines" array must hold exactly '+lines.length+' numbers, one per line in order, each from 0 (the first person) up to "speakers" minus 1.\n\n'+
     'LINES:\n'+lines.map(function(x,i){return (i+1)+'. '+x.text;}).join('\n').slice(0,80000);
 
   callClaude(prompt,4000).then(function(raw){
     var r=parseJSON(raw);
-    if(!r.names||!r.names.length||!r.lines||!r.lines.length)throw new Error('shape');
-    var n=r.names.slice(0,6);
+    var cnt=parseInt(r.speakers,10);
+    if(!(cnt>=1)&&r.names&&r.names.length)cnt=r.names.length;
+    if(!(cnt>=1)||!r.lines||!r.lines.length)throw new Error('shape');
+    // labels only, numbered by who talks first; any names the AI sent are ignored
+    var order=[];
     for(var i=0;i<r.lines.length&&i<lines.length;i++){
       var v=parseInt(r.lines[i],10);
-      lines[i].sp=(isNaN(v)||v<0||v>=n.length)?0:v;
+      if(isNaN(v)||v<0||v>=cnt)v=0;
+      if(order.indexOf(v)<0)order.push(v);
+      lines[i].sp=order.indexOf(v);
     }
-    s.spkNames=n;
+    var n=Math.max(1,order.length),names=[];
+    s.segs.forEach(function(x){if(x.sp+1>n)n=x.sp+1;});
+    for(var j=0;j<n;j++)names.push('Speaker '+(j+1));
+    s.spkNames=names;
     saveSessions();
-    flash('Sorted into '+n.length+' speakers: '+n.join(', ')+'. It guessed from the wording, so check it over.');
+    flash('Sorted into '+order.length+' speakers. It guessed from the wording, so check it over. Tap a speaker to name them.');
   }).catch(function(e){
     flash(e.message==='nokey'?'Add your Anthropic API key in Settings first.':'Could not sort the speakers. Try again.','warn');
   }).then(done);
@@ -1407,20 +1572,21 @@ function sortSpeakers(){
 function askQuestion(text){
   var s=current();if(!s||busy)return;
   var q=(text||'').trim();if(!q)return;
-  if(!apiKey){flash('Add your Anthropic API key in Settings first.','warn');return;}
+  if(!apiKey&&!aiUrl){flash('Add your Anthropic API key or Free AI link in Settings first.','warn');return;}
 
   s.chat.push({role:'user',text:q});saveSessions();
   busy=true;busyWhat='ask';renderDetail();
 
   var prior=s.chat.slice(0,-1).map(function(m){return (m.role==='user'?'Q: ':'A: ')+m.text;}).join('\n');
-  var prompt='Answer questions about this recorded conversation. Use only what is in the transcript. If the answer is not there, say so plainly. If you are reading between the lines, say that too. Keep answers short and simple.\n\n'+
+  var prompt='Answer questions about this recorded conversation. Use only what is in the transcript. If the answer is not there, say so plainly. If you are reading between the lines, say that too. Keep answers short and simple. '+
+    'Refer to speakers only by their labels in the transcript; never guess who a labeled speaker really is.\n\n'+
     'TRANSCRIPT:\n'+transcriptText(s).slice(0,80000)+'\n\n'+
     (prior?'EARLIER IN THIS CHAT:\n'+prior+'\n\n':'')+'QUESTION: '+q;
 
   callClaude(prompt,1200).then(function(ans){
     s.chat.push({role:'assistant',text:ans.trim()});saveSessions();
   }).catch(function(){
-    s.chat.push({role:'assistant',text:'That did not go through. Check the API key and ask again.'});saveSessions();
+    s.chat.push({role:'assistant',text:'That did not go through. Check Settings and ask again.'});saveSessions();
   }).then(done);
 }
 
@@ -1581,6 +1747,12 @@ function init(){
   $('gearBtn').onclick=function(){$('sheet').classList.remove('hide');};
   $('closeSheet').onclick=function(){$('sheet').classList.add('hide');};
   $('sheet').onclick=function(e){if(e.target===$('sheet'))$('sheet').classList.add('hide');};
+
+  $('nameClose').onclick=closeNameSheet;
+  $('nameSheet').onclick=function(e){if(e.target===$('nameSheet'))closeNameSheet();};
+  $('nameSave').onclick=function(){saveName(false);};
+  $('nameClear').onclick=function(){saveName(true);};
+  $('nameInput').onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();saveName(false);}};
 
   $('apiKey').oninput=function(){apiKey=$('apiKey').value.trim();try{localStorage.setItem(KEY_API,apiKey);}catch(e){}setImpMode(impMode);};
   $('model').onchange=function(){prefs.model=$('model').value;savePrefs();};
