@@ -296,6 +296,17 @@
       Pulls in recordings from your Plaud automatically. Keep this link private — anyone who has it can read your Plaud notes.
     </p>
 
+    <label class="lbl" for="phoneKey">Phone key</label>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input class="fld" id="phoneKey" type="text" placeholder="Type the key from the mini" autocomplete="off"
+        autocapitalize="characters" autocorrect="off" spellcheck="false" style="flex:1;min-width:0">
+      <button class="btn sm" id="phoneKeySave">Save</button>
+    </div>
+    <p id="phoneKeyMsg" style="font-size:12.5px;color:var(--muted);margin:7px 0 4px;line-height:1.5"></p>
+    <p style="font-size:12.5px;color:var(--muted);margin:0 0 20px;line-height:1.5">
+      Lets this phone use your Plaud sync, Free AI and naming links. It is 28 letters and numbers. Spaces and dashes don’t matter.
+    </p>
+
     <label class="lbl" for="model">Model</label>
     <select class="fld" id="model" style="margin-bottom:20px">
       <option value="claude-sonnet-5">Sonnet 5 — best balance</option>
@@ -351,6 +362,7 @@
 
 var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
 var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince', KEY_AI='ont.aiurl';
+var KEY_PHONE='ont.phonekey';
 
 var TEMPLATES={
   meeting:{label:'Meeting',hint:'A work meeting. Focus on decisions made, who owns what, and dates.'},
@@ -374,6 +386,7 @@ var sessions=[], prefs={lang:'en-US',model:'claude-sonnet-5',spkCount:1,capture:
   spkNames:['Speaker 1','Speaker 2','Speaker 3','Speaker 4','Speaker 5','Speaker 6']};
 var apiKey='',dgKey='',oaKey='',aiUrl='';
 var syncUrl='',syncing=false,lastCheck=0,pendingBusy=false;
+var phoneKey='',keyRefused=false;
 var impMode='text',uploading=false,pendingAudio=null,markTimes=[];
 var isIOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(/Mac/.test(navigator.userAgent)&&'ontouchend' in document);
 var hasWebSpeech=!!(window.SpeechRecognition||window.webkitSpeechRecognition);
@@ -407,6 +420,8 @@ function load(){
   try{oaKey=localStorage.getItem(KEY_OA)||'';}catch(e){}
   try{syncUrl=localStorage.getItem(KEY_SYNC)||'';}catch(e){}
   try{aiUrl=localStorage.getItem(KEY_AI)||'';}catch(e){}
+  try{phoneKey=localStorage.getItem(KEY_PHONE)||'';}catch(e){}
+  if(!goodPhoneKey(phoneKey))phoneKey='';
   try{var p=JSON.parse(localStorage.getItem(KEY_PREFS)||'{}');
       for(var k in p){if(p[k]!==undefined&&p[k]!==null)prefs[k]=p[k];}}catch(e){}
 }
@@ -949,6 +964,36 @@ function setImpMode(m){
 }
 
 
+/* ---------- phone key (the mini's n8n refuses the three links without it) ---------- */
+// Sent ONLY to the Plaud sync, naming and Free AI links, never to Anthropic or anyone else.
+var KEY_MSG='Your phone key is missing or wrong. Open Settings and enter it.';
+function normPhoneKey(t){
+  return String(t||'').toUpperCase().replace(/[\s\-‐-―]+/g,'').replace(/O/g,'0').replace(/[IL]/g,'1');
+}
+function goodPhoneKey(k){return /^[0-9A-HJKMNP-TV-Z]{28}$/.test(k||'');}
+function linkHeaders(h){h=h||{};if(phoneKey)h['X-Notetaker-Key']=phoneKey;return h;}
+function keyErr(){return new Error('phonekey');}
+function keyProblem(){return !phoneKey||keyRefused;}
+function markKeyRefused(){keyRefused=true;renderPhoneKey();renderSyncBar();}
+function renderPhoneKey(){
+  var m=$('phoneKeyMsg');if(!m)return;
+  m.textContent=phoneKey?'Saved, ends in '+phoneKey.slice(-4)+'.'+(keyRefused?' The mini did not accept it. Check it and type it again.':'')
+    :'No phone key on this phone yet.';
+}
+function savePhoneKey(){
+  var k=normPhoneKey($('phoneKey').value);
+  if(!goodPhoneKey(k)){
+    $('phoneKeyMsg').textContent='That is not the phone key. It is 28 letters and numbers, as shown on the mini. Check it and try again.';
+    return;
+  }
+  phoneKey=k;keyRefused=false;
+  try{localStorage.setItem(KEY_PHONE,phoneKey);}catch(e){}
+  $('phoneKey').value='';
+  renderPhoneKey();renderSyncBar();
+  if(!$('viewDetail').classList.contains('hide')&&!busy)renderDetail();
+  if(syncUrl)syncPlaud(true);
+}
+
 /* ---------- Plaud sync (via n8n) ---------- */
 function ago(ms){
   var s=Math.floor((Date.now()-ms)/1000);
@@ -964,6 +1009,7 @@ function renderSyncBar(){
   if(!syncUrl)return;
   var t;
   if(syncing)t='Checking your Plaud\u2026';
+  else if(keyProblem())t=KEY_MSG;
   else if(pendingBusy)t='Writing up new Plaud recordings\u2026';
   else if(lastCheck)t='Plaud checked '+ago(lastCheck);
   else t='Plaud connected';
@@ -1010,6 +1056,8 @@ function addPlaudNote(n){
 
 function syncPlaud(manual){
   if(!syncUrl||syncing)return;
+  // No key: never call. A refused key: only a tap tries again, nothing retries on its own.
+  if(!phoneKey||(keyRefused&&!manual)){renderSyncBar();if(manual)flash(KEY_MSG,'warn');return;}
   syncing=true;renderSyncBar();
   var since='';try{since=localStorage.getItem(KEY_SINCE)||'';}catch(e){}
   var added=0,pages=0,waits=0,signinWarned=false;
@@ -1019,7 +1067,8 @@ function syncPlaud(manual){
   function page(s){
     pages++;
     var u=syncUrl+(syncUrl.indexOf('?')>-1?'&':'?')+'since='+encodeURIComponent(s||'')+'&_='+Date.now();
-    return fetch(u).then(function(r){
+    return fetch(u,{headers:linkHeaders()}).then(function(r){
+      if(r.status===403)throw keyErr();
       if(!r.ok)throw new Error('status '+r.status);
       return r.json();
     }).then(function(d){
@@ -1044,6 +1093,7 @@ function syncPlaud(manual){
 
   page(since).then(function(){
     syncing=false;lastCheck=Date.now();
+    if(keyRefused){keyRefused=false;renderPhoneKey();}
     if(added){
       sessions.sort(function(a,b){return b.created-a.created;});
       saveSessions();
@@ -1051,9 +1101,10 @@ function syncPlaud(manual){
     }else if(manual)flash('Nothing new from your Plaud yet.');
     refreshOpenView();
     processPending();
-  }).catch(function(){
+  }).catch(function(e){
     syncing=false;lastCheck=Date.now();
-    if(manual)flash('Could not reach your Plaud sync. Check the link in Settings and your connection.','warn');
+    if(e&&e.message==='phonekey'){markKeyRefused();flash(KEY_MSG,'warn');}
+    else if(manual)flash('Could not reach your Plaud sync. Check the link in Settings and your connection.','warn');
     refreshOpenView();
   });
 }
@@ -1278,7 +1329,8 @@ function renderDetail(){
     h+='</div><div style="display:flex;gap:8px;margin-top:12px">'+
       '<input class="fld" id="qInput" placeholder="Ask a question" style="flex:1">'+
       '<button class="btn" id="askBtn"'+(busy?' disabled':'')+'>Ask</button></div>'+
-      ((apiKey||aiUrl)?'':'<p style="font-size:12.5px;color:var(--muted);margin-top:10px">Add your Anthropic API key or Free AI link in Settings to use this.</p>');
+      ((apiKey||aiUrl)?'':'<p style="font-size:12.5px;color:var(--muted);margin-top:10px">Add your Anthropic API key or Free AI link in Settings to use this.</p>')+
+      ((aiUrl&&keyProblem())?'<p id="askKeyMsg" style="font-size:12.5px;color:var(--muted);margin-top:10px">'+esc(KEY_MSG)+'</p>':'');
   }
 
   $('dBody').innerHTML=h;
@@ -1382,7 +1434,7 @@ function openNameSheet(sp){
   $('nameHint').textContent=s.source==='Plaud'?
     'Saving teaches the mini this voice. Later recordings show a name only when the voice clearly matches. Otherwise they say Speaker 1, 2, 3.':
     'This changes the name in this note only. Voice learning works on Plaud recordings.';
-  showNameMsg('');setNameBusy(false);
+  showNameMsg(s.source==='Plaud'&&keyProblem()?KEY_MSG:'');setNameBusy(false);
   $('nameSheet').classList.remove('hide');
   setTimeout(function(){try{$('nameInput').focus();}catch(e){}},60);
 }
@@ -1409,12 +1461,14 @@ function saveName(clear){
   }
   var url=nameUrl();
   if(!url){showNameMsg('Naming needs the Plaud sync link in Settings.');return;}
+  if(!phoneKey){showNameMsg(KEY_MSG);return;}
   setNameBusy(true);showNameMsg('');
   var ac=window.AbortController?new AbortController():null;
   var timer=setTimeout(function(){if(ac)ac.abort();},30000);
-  fetch(url,{method:'POST',headers:{'content-type':'application/json'},signal:ac?ac.signal:undefined,
+  fetch(url,{method:'POST',headers:linkHeaders({'content-type':'application/json'}),signal:ac?ac.signal:undefined,
     body:JSON.stringify({note:String(s.id).replace(/^plaud_/,''),speaker:ctx.sp,name:nm})
   }).then(function(r){
+    if(r.status===403)throw keyErr();
     if(!r.ok)throw new Error('status '+r.status);
     return r.json();
   }).then(function(d){
@@ -1427,8 +1481,9 @@ function saveName(clear){
     if(nameCtx===ctx)closeNameSheet();
     if(activeId===s.id&&!$('viewDetail').classList.contains('hide'))renderDetail();
     flash(nameSaid(d,nm,ctx.sp));
-  }).catch(function(){
+  }).catch(function(e){
     clearTimeout(timer);setNameBusy(false);
+    if(e&&e.message==='phonekey'){markKeyRefused();showNameMsg(KEY_MSG);return;}
     showNameMsg('Could not reach the mini, so nothing changed. Check your connection and try again.');
   });
 }
@@ -1436,15 +1491,20 @@ function saveName(clear){
 /* ---------- Claude ---------- */
 function callClaude(prompt,maxTokens){
   if(!apiKey&&!aiUrl)return Promise.reject(new Error('nokey'));
+  if(aiUrl&&!phoneKey)return Promise.reject(keyErr());
+  var mine=!!aiUrl;
   var url=aiUrl||'https://api.anthropic.com/v1/messages';
   var hdrs={'content-type':'application/json'};
-  if(!aiUrl){hdrs['x-api-key']=apiKey;hdrs['anthropic-version']='2023-06-01';
+  // the phone key goes to the Free AI link only; Anthropic gets its own key and nothing else
+  if(mine)hdrs=linkHeaders(hdrs);
+  else{hdrs['x-api-key']=apiKey;hdrs['anthropic-version']='2023-06-01';
     hdrs['anthropic-dangerous-direct-browser-access']='true';}
   return fetch(url,{
     method:'POST',
     headers:hdrs,
     body:JSON.stringify({model:prefs.model,max_tokens:maxTokens||2000,messages:[{role:'user',content:prompt}]})
   }).then(function(r){
+    if(mine&&r.status===403){markKeyRefused();throw keyErr();}
     if(!r.ok)return r.text().then(function(t){throw new Error(t.slice(0,200));});
     return r.json();
   }).then(function(d){
@@ -1459,6 +1519,7 @@ function parseJSON(raw){
 function guard(what){
   if(busy)return false;
   if(!apiKey&&!aiUrl){flash('Add your Anthropic API key or Free AI link in Settings first.','warn');return false;}
+  if(aiUrl&&!phoneKey){flash(KEY_MSG,'warn');return false;}
   busy=true;busyWhat=what;renderDetail();return true;
 }
 function done(){busy=false;busyWhat='';renderDetail();}
@@ -1521,14 +1582,14 @@ function runPipeline(s,step){
 function makeSummary(){
   var s=current();if(!s||!guard('sum'))return;
   summaryFor(s).catch(function(e){
-    flash(e.message==='nokey'?'Add your Anthropic API key or Free AI link in Settings first.':'The summary did not come back. Check Settings and try again.','warn');
+    flash(e.message==='nokey'?'Add your Anthropic API key or Free AI link in Settings first.':e.message==='phonekey'?KEY_MSG:'The summary did not come back. Check Settings and try again.','warn');
   }).then(done);
 }
 
 function makeDeep(){
   var s=current();if(!s||!guard('deep'))return;
   deepFor(s).catch(function(e){
-    flash(e.message==='nokey'?'Add your Anthropic API key in Settings first.':'The analysis did not come back. Try again, or switch models in Settings.','warn');
+    flash(e.message==='nokey'?'Add your Anthropic API key in Settings first.':e.message==='phonekey'?KEY_MSG:'The analysis did not come back. Try again, or switch models in Settings.','warn');
   }).then(done);
 }
 
@@ -1565,7 +1626,7 @@ function sortSpeakers(){
     saveSessions();
     flash('Sorted into '+order.length+' speakers. It guessed from the wording, so check it over. Tap a speaker to name them.');
   }).catch(function(e){
-    flash(e.message==='nokey'?'Add your Anthropic API key in Settings first.':'Could not sort the speakers. Try again.','warn');
+    flash(e.message==='nokey'?'Add your Anthropic API key in Settings first.':e.message==='phonekey'?KEY_MSG:'Could not sort the speakers. Try again.','warn');
   }).then(done);
 }
 
@@ -1573,6 +1634,7 @@ function askQuestion(text){
   var s=current();if(!s||busy)return;
   var q=(text||'').trim();if(!q)return;
   if(!apiKey&&!aiUrl){flash('Add your Anthropic API key or Free AI link in Settings first.','warn');return;}
+  if(aiUrl&&!phoneKey){flash(KEY_MSG,'warn');return;}
 
   s.chat.push({role:'user',text:q});saveSessions();
   busy=true;busyWhat='ask';renderDetail();
@@ -1585,8 +1647,8 @@ function askQuestion(text){
 
   callClaude(prompt,1200).then(function(ans){
     s.chat.push({role:'assistant',text:ans.trim()});saveSessions();
-  }).catch(function(){
-    s.chat.push({role:'assistant',text:'That did not go through. Check Settings and ask again.'});saveSessions();
+  }).catch(function(e){
+    s.chat.push({role:'assistant',text:(e&&e.message==='phonekey')?KEY_MSG:'That did not go through. Check Settings and ask again.'});saveSessions();
   }).then(done);
 }
 
@@ -1726,6 +1788,9 @@ function init(){
     if(syncUrl)syncPlaud(true);
   };
   $('syncBtn').onclick=function(){syncPlaud(true);};
+  $('phoneKeySave').onclick=savePhoneKey;
+  $('phoneKey').onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();savePhoneKey();}};
+  renderPhoneKey();
   document.addEventListener('visibilitychange',function(){
     if(document.visibilityState==='visible'&&syncUrl&&Date.now()-lastCheck>60000)syncPlaud(false);
   });
@@ -1767,7 +1832,7 @@ function init(){
         localStorage.removeItem(KEY_PREFS);localStorage.removeItem(KEY_DRAFT);
         localStorage.removeItem(KEY_DG);localStorage.removeItem(KEY_OA);
         localStorage.removeItem(KEY_SYNC);localStorage.removeItem(KEY_SINCE);
-        localStorage.removeItem(KEY_AI);}catch(e){}
+        localStorage.removeItem(KEY_AI);localStorage.removeItem(KEY_PHONE);}catch(e){}
     location.reload();
   };
 
