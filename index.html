@@ -369,7 +369,7 @@
 "use strict";
 
 // The build of this page. Change it on EVERY change to this file (YYYY-MM-DD.N): phones update only to a new one.
-var APP_BUILD='2026-10-05.1';
+var APP_BUILD='2026-10-05.2';
 
 var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
 var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince', KEY_AI='ont.aiurl';
@@ -1068,6 +1068,21 @@ function addPlaudNote(n){
   return s;
 }
 
+// The mini can correct a note's time after this phone already has it (10-05 time fix). Only notes the phone
+// still has change; a note deleted here never comes back.
+function applyTimes(t){
+  if(!t||typeof t!=='object')return 0;
+  var n=0;
+  Object.keys(t).forEach(function(k){
+    var ms=Date.parse(t[k]);if(!ms)return;
+    for(var i=0;i<sessions.length;i++)if(sessions[i].id==='plaud_'+k){
+      if(sessions[i].created!==ms){sessions[i].created=ms;n++;}
+      break;
+    }
+  });
+  return n;
+}
+
 function syncPlaud(manual){
   if(!syncUrl||syncing||updLeaving)return;
   // No key: never call. A refused key: only a tap tries again, nothing retries on its own.
@@ -1090,7 +1105,7 @@ function syncPlaud(manual){
       // the mini renews the Plaud sign-in itself; when that fails it says so here
       if(d.signin==='expired'&&!signinWarned){signinWarned=true;flash('Plaud sign-in expired. Sign in again at the mini.','warn');}
       (d.notes||[]).forEach(function(n){if(addPlaudNote(n)){added++;got++;}});
-      if(got){
+      if(got+applyTimes(d.times)){
         sessions.sort(function(a,b){return b.created-a.created;});
         saveSessions();refreshOpenView();
       }
