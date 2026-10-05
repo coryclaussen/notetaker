@@ -244,6 +244,13 @@
       <strong style="font-size:17px">Settings</strong>
       <button class="btn sm ghost" id="closeSheet">Done</button>
     </div>
+    <div class="flash warn hide" id="updBox" style="margin:0 0 20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <span>A new version is ready.</span>
+        <button class="btn sm" id="updNow">Update now</button>
+      </div>
+      <p class="hintp hide" id="updMsg">Finish or save what you are doing first, then tap Update now.</p>
+    </div>
     <label class="lbl" for="apiKey">Anthropic API key</label>
     <input class="fld" id="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off">
     <p style="font-size:12.5px;color:var(--muted);margin:7px 0 20px;line-height:1.5">
@@ -336,6 +343,7 @@
       </p>
       <button class="btn sm ghost" id="wipeBtn" style="color:var(--rec);border-color:#E3C4C0">Erase everything on this device</button>
     </div>
+    <p id="appVer" style="font-size:12px;color:var(--muted);margin:18px 0 0"></p>
   </div>
 </div>
 
@@ -359,6 +367,9 @@
 <script>
 (function(){
 "use strict";
+
+// The build of this page. Change it on EVERY change to this file (YYYY-MM-DD.N): phones update only to a new one.
+var APP_BUILD='2026-10-04.1';
 
 var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
 var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince', KEY_AI='ont.aiurl';
@@ -559,12 +570,14 @@ function stopRec(silent){
   setCapMode(prefs.capture||'audio');
   $('pads').classList.add('hide');
   if(silent)return;
+  updStopping=true;   // the next second turns the recording into a note: no update reload meanwhile
 
   var secs=Math.floor((Date.now()-startMs)/1000);
   var audioOnly=(prefs.capture==='audio')||!(window.SpeechRecognition||window.webkitSpeechRecognition);
 
   if(audioOnly){
     setTimeout(function(){
+      updStopping=false;
       if(!chunks.length){
         flash('No audio was captured. Check the mic and try again.','warn');
         $('clock').textContent='0:00';return;
@@ -587,6 +600,7 @@ function stopRec(silent){
   }
 
   setTimeout(function(){
+    updStopping=false;
     if(!segs.length){
       flash('Nothing was picked up. Check your microphone and try again.','warn');
       $('clock').textContent='0:00';return;
@@ -1055,7 +1069,7 @@ function addPlaudNote(n){
 }
 
 function syncPlaud(manual){
-  if(!syncUrl||syncing)return;
+  if(!syncUrl||syncing||updLeaving)return;
   // No key: never call. A refused key: only a tap tries again, nothing retries on its own.
   if(!phoneKey||(keyRefused&&!manual)){renderSyncBar();if(manual)flash(KEY_MSG,'warn');return;}
   syncing=true;renderSyncBar();
@@ -1110,7 +1124,7 @@ function syncPlaud(manual){
 }
 
 function processPending(){
-  if(pendingBusy||!prefs.auto||!apiKey)return;
+  if(pendingBusy||updLeaving||!prefs.auto||!apiKey)return;
   var list=sessions.filter(function(s){return s.pendingAuto&&!s.summary;});
   if(!list.length)return;
   pendingBusy=true;renderSyncBar();
@@ -1463,6 +1477,8 @@ function saveName(clear){
   if(!url){showNameMsg('Naming needs the Plaud sync link in Settings.');return;}
   if(!phoneKey){showNameMsg(KEY_MSG);return;}
   setNameBusy(true);showNameMsg('');
+  namingN++;   // a naming call in flight (it can outlive the sheet): no update reload until it ends
+  var counted=true,fin=function(){if(counted){counted=false;namingN--;}};
   var ac=window.AbortController?new AbortController():null;
   var timer=setTimeout(function(){if(ac)ac.abort();},30000);
   fetch(url,{method:'POST',headers:linkHeaders({'content-type':'application/json'}),signal:ac?ac.signal:undefined,
@@ -1472,7 +1488,7 @@ function saveName(clear){
     if(!r.ok)throw new Error('status '+r.status);
     return r.json();
   }).then(function(d){
-    clearTimeout(timer);setNameBusy(false);
+    fin();clearTimeout(timer);setNameBusy(false);
     if(!d||!d.ok){
       showNameMsg(d&&d.error==='unknown note'?'The mini does not have this recording, so nothing changed.':'The mini could not save that. Try again.');
       return;
@@ -1482,7 +1498,7 @@ function saveName(clear){
     if(activeId===s.id&&!$('viewDetail').classList.contains('hide'))renderDetail();
     flash(nameSaid(d,nm,ctx.sp));
   }).catch(function(e){
-    clearTimeout(timer);setNameBusy(false);
+    fin();clearTimeout(timer);setNameBusy(false);
     if(e&&e.message==='phonekey'){markKeyRefused();showNameMsg(KEY_MSG);return;}
     showNameMsg('Could not reach the mini, so nothing changed. Check your connection and try again.');
   });
@@ -1725,8 +1741,133 @@ function renderSpkNames(){
   $('spkCountLbl').textContent=prefs.spkCount;
 }
 
+/* ---------- updates: the app picks up a newer copy of itself ---------- */
+// One plain GET of this same page (no key, no custom header, no other host) reads the server's APP_BUILD. A different
+// build reloads the app on a new address, but only when nothing is going on. Stored notes, links and keys stay as they
+// are. The pattern needs digits right after the quote, so it can never match its own text.
+var UPD_RE=/var APP_BUILD='(\d{4}-\d\d-\d\d\.\d+)'/;
+var KEY_UPDLOG='ont.updLog',KEY_UPDSYNC='ont.updSync';
+var updLast=0,updOk=0,updWaiting='',updNoAuto=false,updHeld=false,updLeaving=false,updStopping=false;
+var updTimer=null,updIdle=0,hiddenAt=0,namingN=0;
+
+// Busy = anything a reload would cut off or lose. manual = the Update now tap, which is made inside Settings.
+function updBusy(manual){
+  var i,f,a=document.activeElement;
+  if(keepAlive||rec||stream||mediaRec||updStopping)return true;                  // recording (this app has no pause)
+  if(pending||pendingAudio||!$('viewSave').classList.contains('hide'))return true; // unsaved recording, Save screen
+  if(uploading||pendingBusy||syncing||busy||namingN>0)return true;    // transcribing, write-ups, Plaud, AI, naming
+  if(!$('nameSheet').classList.contains('hide'))return true;
+  var held=['impTitle','impText','qInput','phoneKey'];
+  if(!manual)held.push('search');
+  for(i=0;i<held.length;i++){f=$(held[i]);if(f&&String(f.value||'').trim())return true;}   // typed, not saved yet
+  if($('impFile').files&&$('impFile').files.length)return true;                    // audio files picked, not sent yet
+  if(manual)return false;
+  if(!$('sheet').classList.contains('hide'))return true;
+  // a text field in use: focused and on screen
+  return !!a&&a.getClientRects().length>0&&(/^(TEXTAREA|SELECT)$/.test(a.tagName)||a.isContentEditable||
+    (a.tagName==='INPUT'&&!/^(button|submit|reset|checkbox|radio|range|file|color|image|hidden)$/i.test(a.type||'')));
+}
+
+// done(true) when the page is on its way to the new version. No answer, the same build, an error or no
+// connection: nothing happens and nothing is shown.
+function checkForUpdate(done){
+  done=done||function(){};
+  if(updLeaving)return done(true);
+  if(Date.now()-updLast<60000)return done(false);   // at most one check a minute
+  updLast=Date.now();
+  var over=false,ac=window.AbortController?new AbortController():null;
+  var timer=setTimeout(function(){end('');if(ac)ac.abort();},5000);
+  function end(build){
+    if(over)return;
+    over=true;clearTimeout(timer);
+    if(build===APP_BUILD)updWaiting='';
+    if(!build||build===APP_BUILD){updShow();return done(false);}
+    updWaiting=build;updOk=Date.now();
+    done(updTry(true));
+  }
+  try{
+    fetch(location.pathname,{cache:'reload',signal:ac?ac.signal:undefined})
+      .then(function(r){return r.ok?r.text():'';})
+      .then(function(t){var m=UPD_RE.exec(String(t||''));end(m?m[1]:'');},function(){end('');});
+  }catch(e){end('');}
+}
+
+// Apply a waiting update now if nothing is going on, else watch for the next idle moment.
+// fresh = the server answered just now. A reload only ever follows a server answer less than a minute old, so it
+// never lands on a dead connection. Returns true when the page is on its way to the new version.
+function updTry(fresh){
+  if(updLeaving)return true;
+  if(!updWaiting)return false;
+  if(updNoAuto){updHeld=true;updShow();return false;}
+  if(document.visibilityState==='visible'&&!updBusy(false)&&(fresh||(navigator.onLine!==false&&Date.now()-updOk<60000))){
+    updApply(updWaiting,false);return updLeaving;
+  }
+  if(!updTimer){updIdle=0;updTimer=setInterval(updTick,1500);}
+  return false;
+}
+function updTick(){
+  if(updLeaving||updNoAuto||!updWaiting){clearInterval(updTimer);updTimer=null;return;}
+  if(document.visibilityState!=='visible'||updBusy(false)||navigator.onLine===false){updIdle=0;return;}
+  if(++updIdle<2)return;
+  if(Date.now()-updOk<60000){clearInterval(updTimer);updTimer=null;updApply(updWaiting,false);return;}
+  // the server's answer is over a minute old: ask again first (at most one check a minute); a failed check does nothing
+  if(Date.now()-updLast>=60000){clearInterval(updTimer);updTimer=null;checkForUpdate();}
+}
+
+// Reload on a new address. At most 2 automatic reloads in 10 minutes (ont.updLog); past that, Settings offers it.
+function updApply(build,manual){
+  if(updLeaving||!build)return;
+  if(!manual){
+    var log=updLog();
+    if(updNoAuto||!log||log.length>=2){updHeld=true;updShow();return;}
+    log.push(Date.now());
+    try{localStorage.setItem(KEY_UPDLOG,JSON.stringify(log));}catch(e){updHeld=true;updShow();return;}
+  }
+  updLeaving=true;
+  if(updTimer){clearInterval(updTimer);updTimer=null;}
+  // the new page skips its start-up Plaud check when this page finished one less than a minute ago
+  try{if(lastCheck)sessionStorage.setItem(KEY_UPDSYNC,String(lastCheck));}catch(e){}
+  location.replace(location.pathname+'?u='+encodeURIComponent(build)+(manual?'&m='+Date.now():''));
+}
+function updLog(){
+  var raw,a,now=Date.now();
+  try{raw=localStorage.getItem(KEY_UPDLOG);}catch(e){return null;}
+  try{a=JSON.parse(raw||'[]');}catch(e){a=[];}
+  return (Array.isArray(a)?a:[]).filter(function(t){return typeof t==='number'&&Math.abs(now-t)<600000;});
+}
+function updShow(){
+  var b=$('updBox');
+  if(b)b.classList.toggle('hide',!(updHeld&&updWaiting&&!updLeaving));
+}
+
+// First thing in init: after an update reload (?u= in the address), tidy the address and say so once.
+function updOnLoad(){
+  $('appVer').textContent='App version '+APP_BUILD;
+  var m=/[?&]u=([^&#]*)/.exec(location.search),u='',t;
+  if(!m)return;
+  try{u=decodeURIComponent(m[1]);}catch(e){}
+  try{history.replaceState(history.state,'',location.pathname+location.hash);}catch(e){}
+  updLast=Date.now();   // the page that sent us here checked a moment ago
+  if(u===APP_BUILD)flash('Updated to the newest version.');
+  else updNoAuto=true;  // the new address still gave another build: no automatic reload for the rest of this page
+  try{
+    t=parseInt(sessionStorage.getItem(KEY_UPDSYNC),10);sessionStorage.removeItem(KEY_UPDSYNC);
+    if(t>0&&Date.now()-t>=0&&Date.now()-t<60000)lastCheck=t;
+  }catch(e){}
+}
+// At start-up the check runs first (4 s at most), then the usual start-up work, unless the app is reloading.
+function updStartup(then){
+  var over=false,cap=setTimeout(function(){if(!over){over=true;then();}},4000);
+  checkForUpdate(function(leaving){
+    if(over)return;
+    over=true;clearTimeout(cap);
+    if(!leaving)then();
+  });
+}
+
 function init(){
   load();buildMeter();setMeter(0);
+  updOnLoad();
 
   $('lang').innerHTML=LANGS.map(function(l){return '<option value="'+l[0]+'">'+l[1]+'</option>';}).join('');
   $('lang').value=prefs.lang;$('model').value=prefs.model;$('apiKey').value=apiKey;
@@ -1792,7 +1933,13 @@ function init(){
   $('phoneKey').onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();savePhoneKey();}};
   renderPhoneKey();
   document.addEventListener('visibilitychange',function(){
-    if(document.visibilityState==='visible'&&syncUrl&&Date.now()-lastCheck>60000)syncPlaud(false);
+    if(document.visibilityState!=='visible'){hiddenAt=Date.now();return;}
+    var away=hiddenAt?Date.now()-hiddenAt:0;hiddenAt=0;
+    function syncRule(){if(syncUrl&&Date.now()-lastCheck>60000)syncPlaud(false);}
+    // away a minute or more: look for a new version first, then the usual Plaud rule
+    if(away>=60000&&Date.now()-updLast>=60000){checkForUpdate(function(leaving){if(!leaving)syncRule();});return;}
+    if(updTry(false))return;
+    syncRule();
   });
 
   $('tabRec').onclick=function(){show(pending?'save':'record');};
@@ -1809,7 +1956,11 @@ function init(){
     saveSessions();activeId=null;show('lib');
   };
 
-  $('gearBtn').onclick=function(){$('sheet').classList.remove('hide');};
+  $('gearBtn').onclick=function(){$('updMsg').classList.add('hide');$('sheet').classList.remove('hide');};
+  $('updNow').onclick=function(){
+    if(updBusy(true)){$('updMsg').classList.remove('hide');return;}
+    updApply(updWaiting,true);
+  };
   $('closeSheet').onclick=function(){$('sheet').classList.add('hide');};
   $('sheet').onclick=function(e){if(e.target===$('sheet'))$('sheet').classList.add('hide');};
 
@@ -1846,7 +1997,7 @@ function init(){
       pending={secs:Math.floor((Date.now()-startMs)/1000),segs:segs.slice()};
       $('saveTitle').value='Recovered recording';
       $('saveStats').textContent=segs.length+' lines recovered';
-      show('save');return;
+      show('save');checkForUpdate();return;   // a new version waits until this is saved or discarded
     }
   }catch(e){}
 
@@ -1858,8 +2009,11 @@ function init(){
     flash('This browser can\'t show words live, so recordings get written up after you stop.','warn');
 
   show('record');
-  if(syncUrl)setTimeout(function(){syncPlaud(false);},400);
-  processPending();
+  updStartup(function(){
+    // after an update reload, a Plaud check the old page finished under a minute ago is not repeated
+    if(syncUrl&&!(lastCheck&&Date.now()-lastCheck<60000))setTimeout(function(){syncPlaud(false);},400);
+    processPending();
+  });
 }
 
 document.addEventListener('DOMContentLoaded',init);
