@@ -221,12 +221,12 @@
     <button class="btn sm ghost" id="backBtn" style="margin-bottom:16px">All notes</button>
     <h2 id="dTitle" style="font-size:22px;font-weight:600;letter-spacing:-.02em;margin:0;line-height:1.28"></h2>
     <div id="dMeta" style="font-size:12.5px;color:var(--muted);margin:6px 0 18px;display:flex;gap:12px;flex-wrap:wrap"></div>
-    <div class="row" id="dTabs" style="margin-bottom:18px"></div>
-    <div id="dBody"></div>
-    <div class="rulebox" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+    <div id="dActions" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:18px">
       <button class="btn sm ghost" id="copyBtn">Copy as Markdown</button>
       <button class="btn sm ghost" id="delBtn" style="margin-left:auto;color:var(--rec);border-color:#E3C4C0">Delete</button>
     </div>
+    <div class="row" id="dTabs" style="margin-bottom:18px"></div>
+    <div id="dBody"></div>
   </section>
 </div>
 
@@ -369,7 +369,7 @@
 "use strict";
 
 // The build of this page. Change it on EVERY change to this file (YYYY-MM-DD.N): phones update only to a new one.
-var APP_BUILD='2026-10-05.2';
+var APP_BUILD='2026-10-06.1';
 
 var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
 var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince', KEY_AI='ont.aiurl';
