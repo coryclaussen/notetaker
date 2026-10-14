@@ -128,6 +128,8 @@
   .ecard .esub{font-size:12.5px;color:var(--muted);line-height:1.5;margin-top:3px}
   .ecard .erem{display:flex;align-items:flex-start;gap:9px;font-size:13.5px;line-height:1.45;margin:7px 0 0;cursor:pointer}
   .ecard .erem input{width:17px;height:17px;flex:none;margin:1px 0 0;accent-color:#171A16}
+  .ecard .erow{display:flex;align-items:flex-start;gap:9px;margin:8px 0 0;font-weight:500;cursor:pointer}
+  .ecard .erow input{width:17px;height:17px;flex:none;margin:3px 0 0;accent-color:#171A16}
   .ecard .eguess{border:1px solid #C9A227;background:#FBF5E0;border-radius:18px;padding:8px 13px;font-size:13px;line-height:1.45;margin:9px 0 0}
   .ecard .ebtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
   .ecard .estat{font-size:13.5px;margin-top:10px}
@@ -390,12 +392,24 @@
   </div>
 </div>
 
+<div class="sheet hide" id="joinSheet">
+  <div class="body">
+    <strong style="font-size:17px;display:block;margin-bottom:10px">Same name</strong>
+    <p style="margin:0;line-height:1.5" id="joinText"></p>
+    <p class="hintp">Joining puts their lines under one speaker in this note. You can undo it on the Ask tab.</p>
+    <div style="display:flex;gap:8px;margin-top:18px">
+      <button class="btn" id="joinYes">Join them</button>
+      <button class="btn ghost" id="joinNo">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
 "use strict";
 
 // The build of this page. Change it on EVERY change to this file (YYYY-MM-DD.N): phones update only to a new one.
-var APP_BUILD='2026-10-13.2';
+var APP_BUILD='2026-10-14.1';
 
 var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
 var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince', KEY_AI='ont.aiurl';
@@ -1243,7 +1257,7 @@ function renderLib(){
   $('libList').innerHTML=h;
   Array.prototype.forEach.call($('libList').children,function(b){
     if(!b.getAttribute)return;
-    b.onclick=function(){activeId=b.getAttribute('data-id');dTab='summary';show('detail');};
+    b.onclick=function(){activeId=b.getAttribute('data-id');dTab='summary';show('detail');splitOnOpen(current());};
   });
 }
 
@@ -1355,6 +1369,7 @@ function renderDetail(){
       h+='<p class="hintp" style="margin:0 0 9px">Tap a speaker to name them.</p><div class="row" style="margin-bottom:14px">';
       for(var k=0;k<nsp;k++)h+='<button class="chip" data-sp="'+k+'"><span class="swatch" style="background:'+
         SPK_COLORS[k%SPK_COLORS.length]+'"></span>'+esc(spkLabel(s,k))+'</button>';
+      if(dupGroups(s).length)h+='<button class="btn sm ghost" id="joinSameBtn"'+(busy?' disabled':'')+'>Join same names</button>';
       h+='</div>';
     }
     // Plaud notes arrive split by voice on the mini; sorting by wording would undo that.
@@ -1383,9 +1398,11 @@ function renderDetail(){
       '<br><br>Or fix it: &quot;It&#39;s Birdy, not Bernie.&quot;</div>';
     s.chat.forEach(function(m,ci){
       if(m.role==='edit'){h+=editCardHtml(s,m,ci);return;}
+      if(m.role==='split'){h+=splitCardHtml(s,m,ci);return;}
       h+='<div class="qa '+(m.role==='user'?'me':'ai')+'">'+esc(m.text)+'</div>';
     });
-    if(busy&&busyWhat==='ask')h+='<div style="font-size:13px;color:var(--muted);padding:4px 2px"><span class="spin"></span> Reading the transcript</div>';
+    if(busy&&(busyWhat==='ask'||busyWhat==='fixread'))h+='<div style="font-size:13px;color:var(--muted);padding:4px 2px"><span class="spin"></span> '+
+      (busyWhat==='fixread'?'Reading your message':'Reading the transcript')+'</div>';
     h+='</div><div style="display:flex;gap:8px;margin-top:12px">'+
       '<input class="fld" id="qInput" placeholder="Ask, or fix a word" style="flex:1;min-width:0">'+
       '<button class="btn" id="askBtn"'+(busy?' disabled':'')+'>Ask</button></div>'+
@@ -1409,9 +1426,7 @@ function renderDetail(){
   }
   Array.prototype.forEach.call(document.querySelectorAll('#dBody [data-act]'),function(b){
     b.onclick=function(){
-      var ci=parseInt(b.getAttribute('data-ci'),10),a=b.getAttribute('data-act');
-      if(a==='apply')applyEdit(ci);else if(a==='cancel')cancelEdit(ci);
-      else if(a==='undo')undoEdit(ci);else if(a==='redo')redoWriteups(ci);
+      cardAct(parseInt(b.getAttribute('data-ci'),10),b.getAttribute('data-act'));
     };
   });
   Array.prototype.forEach.call(document.querySelectorAll('#dBody [data-rem]'),function(c){
@@ -1421,6 +1436,14 @@ function renderDetail(){
       if(r){r.on=!!c.checked;saveSessions();}
     };
   });
+  Array.prototype.forEach.call(document.querySelectorAll('#dBody [data-on]'),function(c){
+    c.onchange=function(){
+      var cur=current(),m=cur&&cur.chat[parseInt(c.getAttribute('data-ci'),10)];
+      var w=m&&m.role==='edit'&&m.status==='pending'&&m.plan.words[parseInt(c.getAttribute('data-on'),10)];
+      if(w){w.on=!!c.checked;saveSessions();}
+    };
+  });
+  if($('joinSameBtn'))$('joinSameBtn').onclick=joinSame;
   Array.prototype.forEach.call(document.querySelectorAll('.askq'),function(b){
     b.onclick=function(){
       var cur=current();
@@ -1509,8 +1532,9 @@ function openNameSheet(sp){
   $('nameHint').textContent=s.source!=='Plaud'?
     'This changes the name in this note only. Voice learning works on Plaud recordings.':
     s.joined?'Speakers in this note were joined, so this changes the name in this note only. The mini does not learn this voice.':
+    s.mismatch?'This note’s speakers do not match the mini’s copy right now, so this changes the name in this note only. The mini does not learn this voice.':
     'Saving teaches the mini this voice. Later recordings show a name only when the voice clearly matches. Otherwise they say Speaker 1, 2, 3.';
-  showNameMsg(s.source==='Plaud'&&!s.joined&&keyProblem()?KEY_MSG:'');setNameBusy(false);
+  showNameMsg(s.source==='Plaud'&&!s.joined&&!s.mismatch&&keyProblem()?KEY_MSG:'');setNameBusy(false);
   $('nameSheet').classList.remove('hide');
   setTimeout(function(){try{$('nameInput').focus();}catch(e){}},60);
 }
@@ -1530,8 +1554,20 @@ function saveName(clear){
   if(/^speaker\s*\d+$/i.test(nm))nm='';
   if(!clear&&!nm){showNameMsg('Type a name first, or tap Cancel.');return;}
   var label=nm||('Speaker '+(ctx.sp+1));
-  // A note with joined speakers no longer matches the mini's speaker numbers: name it here only, never teach a voice.
-  if(s.source!=='Plaud'||s.joined){
+  // Same name as another speaker in this note = the same person: ask once, then join them (ASK2 build B).
+  if(nm){
+    var L=noteLabels(s),twin=-1;
+    for(i=0;i<L.length;i++)if(i!==ctx.sp&&L[i].trim().toLowerCase()===nm.toLowerCase()){twin=i;break;}
+    if(twin>-1){
+      closeNameSheet();
+      if(busy){flash('Wait for the app to finish, then try again.','warn');return;}
+      openJoinSheet(s,[{fi:ctx.sp,ii:twin}],joinLabel(L,ctx.sp)+' and '+joinLabel(L,twin)+' are the same person?');
+      return;
+    }
+  }
+  // A note with joined speakers, or one out of step with the mini's split, no longer matches the mini's speaker
+  // numbers: name it here only, never teach a voice.
+  if(s.source!=='Plaud'||s.joined||s.mismatch){
     applyLabel(s,ctx.sp,label);closeNameSheet();renderDetail();
     flash(nm?'Named '+nm+' in this note.':'Back to Speaker '+(ctx.sp+1)+'.');
     return;
@@ -1712,68 +1748,582 @@ function sortSpeakers(){
 function askQuestion(text){
   var s=current();if(!s||busy)return;
   var q=(text||'').trim();if(!q)return;
+  var a=rfRead(q,s),prior=s.chat.map(chatLine).join('\n');
+  // a clear fix is read by plain code: no AI call at all, and nothing changes until Apply
+  if(a.fix){
+    s.chat.push({role:'user',text:q});
+    takeFix(s,a.fix,'rules',q);
+    saveSessions();
+    // a question in the same message is still answered (the fix itself needed no AI)
+    if(a.rest&&(apiKey||aiUrl)&&!(aiUrl&&!phoneKey)){
+      busy=true;busyWhat='ask';renderDetail();
+      answerQ(s,a.rest,prior).catch(function(e){
+        s.chat.push({role:'assistant',text:(e&&e.message==='phonekey')?KEY_MSG:'That did not go through. Check Settings and ask again.'});saveSessions();
+      }).then(done);
+      return;
+    }
+    renderDetail();return;
+  }
   if(!apiKey&&!aiUrl){flash('Add your Anthropic API key or Free AI link in Settings first.','warn');return;}
   if(aiUrl&&!phoneKey){flash(KEY_MSG,'warn');return;}
-
   s.chat.push({role:'user',text:q});saveSessions();
-  busy=true;busyWhat='ask';renderDetail();
-
-  var prior=s.chat.slice(0,-1).map(chatLine).join('\n');
-  var prompt='Answer questions about this recorded conversation. Use only what is in the transcript. If the answer is not there, say so plainly. If you are reading between the lines, say that too. Keep answers short and simple. '+
-    'Refer to speakers only by their labels in the transcript; never guess who a labeled speaker really is.\n\n'+
-    editRule(noteLabels(s))+'\n\n'+
-    'TRANSCRIPT:\n'+transcriptText(s).slice(0,80000)+'\n\n'+
-    (prior?'EARLIER IN THIS CHAT:\n'+prior+'\n\n':'')+'QUESTION: '+q;
-
-  callClaude(prompt,1200).then(function(ans){
-    // a fix comes back as {"edit":true,...}: show a card, change nothing yet; anything else is a normal answer
-    var j=null;try{j=parseJSON(ans);}catch(e){}
-    if(j&&typeof j==='object'&&!Array.isArray(j)&&j.edit===true)addEditCard(s,j);
-    else s.chat.push({role:'assistant',text:ans.trim()});
-    saveSessions();
+  // The AI reads a fix only when the rules did not, the message sounds like a fix and it is not a plain question.
+  // It gets the message, the speaker labels and the note's name-like words (never the transcript), and every part
+  // of its answer is checked against what Cory typed before a card shows.
+  var read=!a.question&&RF_SIGNAL.test(q)&&!!nameUrl()&&!!phoneKey;
+  busy=true;busyWhat=read?'fixread':'ask';renderDetail();
+  (read?readByAI(q,s):Promise.resolve(null)).then(function(r){
+    if(r&&r.kind==='fix'){takeFix(s,r,'ai',q);saveSessions();return;}
+    if(r&&r.kind==='error'&&r.key){s.chat.push({role:'assistant',text:KEY_MSG});saveSessions();return;}
+    if(r&&r.kind==='paused')s.chat.push({role:'assistant',text:'The AI fix reader is paused because its daily check failed. Clear fixes still work, like “It’s Birdy, not Bernie.”'});
+    if(r&&r.kind==='error')s.chat.push({role:'assistant',text:'The mini’s fix reader did not answer, so this was answered as a question.'});
+    if(busyWhat!=='ask'){busyWhat='ask';renderDetail();}
+    return answerQ(s,q,prior);
   }).catch(function(e){
     s.chat.push({role:'assistant',text:(e&&e.message==='phonekey')?KEY_MSG:'That did not go through. Check Settings and ask again.'});saveSessions();
   }).then(done);
 }
-
-/* ---------- fixes typed in Ask: word fixes and speaker joins (Cory 2026-10-13) ---------- */
-// Nothing changes until Apply. The app counts every match itself and never uses counts from the AI. Joins change one
-// note only and never teach the mini's voice memory (s.joined keeps naming inside the note). One level of Undo.
-var EDIT_KEYS=['segs','spkNames','summary','deep','joined'],GENERIC_RE=/^speaker\s*\d+$/i;
-function editRule(labels){
-  return 'If the message asks to fix or correct the transcript (a misheard word or name, or who spoke, or how many people talked), do not answer it. '+
-    'Reply with ONLY a JSON object instead, no code fences and no other text, shaped exactly like this:\n'+
-    '{"edit":true,"words":[{"from":"wrong spelling","to":"right spelling"}],"speakers":[{"from":"extra speaker label","into":"real speaker label"}],"guessed":false,"say":"one short plain sentence"}\n'+
-    'In "words", "from" is a wrong spelling exactly as it appears in the transcript and "to" is the right one. List every wrong spelling of that word or name you can see in the transcript, each as its own entry (for example both "Bernie" and "Birdie" when the right name is "Birdy"). '+
-    'In "speakers", "from" is an extra speaker that goes away and "into" is the real speaker whose lines it joins. Use only these speaker labels, exactly as written: '+labels.join(', ')+'. '+
-    'If the message only says how many people talked, pick the joins yourself from the wording and set "guessed" to true. '+
-    'Use an empty array for a part with nothing in it. Put no counts in "say". '+
-    'If the message is a question and not a fix, ignore this paragraph and answer normally.';
+// The answer road: plain text back, always shown as an answer. It no longer carries any fix rule (ASK2).
+function answerQ(s,q,prior){
+  var prompt='Answer questions about this recorded conversation. Use only what is in the transcript. If the answer is not there, say so plainly. If you are reading between the lines, say that too. Keep answers short and simple. '+
+    'Refer to speakers only by their labels in the transcript; never guess who a labeled speaker really is.\n\n'+
+    'TRANSCRIPT:\n'+transcriptText(s).slice(0,80000)+'\n\n'+
+    (prior?'EARLIER IN THIS CHAT:\n'+prior+'\n\n':'')+'QUESTION: '+q;
+  return callClaude(prompt,1200).then(function(ans){s.chat.push({role:'assistant',text:String(ans||'').trim()});saveSessions();});
 }
+// Door 1 on the mini (through the name link): a short classifier with a JSON schema. The app repeats every check.
+function readByAI(q,s){
+  var t=q.slice(0,500),labels=noteLabels(s),names=nameList(s,120);
+  return wordsCall({fix:{text:t,speakers:labels,names:names}},75000).then(function(d){
+    return checkFix(d,t,labels,names)||{kind:'error'};
+  },function(e){
+    if(e&&e.message==='phonekey'){markKeyRefused();return {kind:'error',key:true};}
+    return {kind:'error'};
+  });
+}
+
+/* ---------- reading a fix: plain code first, the AI only for the rest (ASK2, Cory 2026-10-14) ---------- */
+// <rules> A pure block: the test rig lifts it out and runs it on its own. It uses only spkLabel, speakerCount,
+// noteLabels, reEsc, wordRe and GENERIC_RE from above.
+// "right" is always text Cory typed, in his casing. A plain question is never a fix. Anything the rules are not sure
+// of gives null, so the AI (or a plain answer) takes it.
+var GENERIC_RE=/^speaker\s*\d+$/i;
+var RF_NUM={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12};
+var RF_N='(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
+var RF_STOP={};
+('a an the this that these those it its i me my mine myself you your yours he him his she her hers we us our ours they them '+
+ 'their there here who whom whose what which when where why how is am are was were be been being do does did done have has had '+
+ 'will would shall should can could may might must to of in on at by for with about from into onto over under up down out off as '+
+ 'than then so if or and but nor not no yes yeah yep nope ok okay all any some every each both either neither more most less much '+
+ 'many few lot lots very really just only also too even still already again now later today tomorrow yesterday soon never always '+
+ 'ever say said says tell told ask asked think thought know knew mean meant like get got go going went come coming came want '+
+ 'wanted need needed make made one two three four five six seven eight nine ten eleven twelve thing things stuff something '+
+ 'anything nothing everything someone anyone everyone nobody somebody people person speaker speakers voice voices guy guys right '+
+ 'wrong name names word words spelling spelled spelt fine good well sure thanks thank please sorry transcript note recording same '+
+ "other another actually instead because maybe it's i'm i'll i've i'd that's there's what's he's she's we're they're you're don't "+
+ "didn't isn't wasn't won't can't doesn't").split(' ').forEach(function(w){RF_STOP[w]=1;});
+var RF_GROUP=/\b(?:team|guys|everyone|everybody|family|kids|crew|staff|others|folks|group|friends|them|they|us|people|whole)\b/i;
+var RF_TOK="#?[\\p{L}\\p{N}][\\p{L}\\p{N}'.&-]*",RF_NAME='('+RF_TOK+'(?: '+RF_TOK+'){0,3})';
+var RF_IT="(?:it'?s|its|it is|it was|that'?s|thats|that is|that was|(?:(?:his|her|their|the|my|[\\p{L}]+'s) )?(?:last |first |full |real |right )?name(?: is|'?s)|the name was|"+
+  "the (?:right|correct|real) (?:name|word|spelling) is|the spelling is|spelling is|(?:it'?s|its|it is) (?:spelled|spelt|written)|"+
+  "spelled|spelt|i said|(?:he|she|they|we) said|(?:it )?should (?:be|say|read))(?: (?:actually|really|supposed to be|meant to be|just))?";
+var RF_SEP="(?:,\\s*(?:but |and )?(?:it'?s |its |it is |it should be |should be )?|\\s+(?:but )?(?:it'?s|its|it is|it should be|should be)\\s+|\\s+but\\s+)";
+var RF_ASK="(?:(?:please|pls|can you|could you|would you|will you|go ahead and|you can|let'?s) )*";
+var RF_WP=[
+  {re:'^'+RF_IT+' '+RF_NAME+',? (?:and )?not '+RF_NAME+'$',x:1,y:2,carry:"it's "},              // it's X, not Y
+  {re:'^'+RF_IT+' not '+RF_NAME+RF_SEP+RF_NAME+'$',x:2,y:1,carry:"it's "},                      // it's not Y, it's X
+  {re:'^not '+RF_NAME+RF_SEP+RF_NAME+'$',x:2,y:1},                                              // not Y, (it's) X
+  {re:'^'+RF_NAME+',? not '+RF_NAME+'$',x:1,y:2,bare:true},                                      // X, not Y
+  {re:'^(?:the )?(?:name |word |spelling )?'+RF_NAME+' (?:should|needs to|has to|must) (?:be|say|read)(?: spelled| spelt| written)? '+RF_NAME+'$',x:2,y:1},
+  {re:'^'+RF_ASK+'(?:change|switch|correct|fix|update|rename|turn|make) (?:all )?(?:of )?(?:the )?(?:name |word |spelling )?'+RF_NAME+' (?:to|into|as)(?: say| read)? '+RF_NAME+'$',x:2,y:1,carry:'change '},
+  {re:'^'+RF_ASK+'(?:swap|switch|trade) (?:all )?(?:of )?(?:the )?'+RF_NAME+' for '+RF_NAME+'$',x:2,y:1,carry:'swap '},
+  {re:'^'+RF_ASK+'replace (?:all )?(?:of )?(?:the )?'+RF_NAME+' (?:with|by) '+RF_NAME+'$',x:2,y:1,carry:'replace '},
+  {re:'^(?:the )?'+RF_NAME+' (?:is|are) (?:actually |really |correctly |properly |always )?(?:spelled|spelt|written)(?: as| like)? '+RF_NAME+'$',x:2,y:1},
+  {re:'^'+RF_ASK+'spell '+RF_NAME+' (?:as|like) '+RF_NAME+'$',x:2,y:1},
+  {re:'^(?:'+RF_IT+' |use |say |write |put )?'+RF_NAME+' instead of '+RF_NAME+'$',x:1,y:2},
+  {re:'^'+RF_NAME+' ?(?:->|=>|-->|→|⇒|=) ?'+RF_NAME+'$',x:2,y:1},
+  {re:'^(?:the )?'+RF_NAME+' (?:is|was) (?:wrong|misspelled|misspelt|mis-spelled|a typo|a mistake|not right|incorrect|spelled wrong|spelt wrong|'+
+    "the wrong (?:spelling|name|word))(?:,| -|:)? (?:(?:it'?s|its|it is|it should (?:be|read|say)|should (?:be|read|say)|use|the (?:right|correct) (?:one|name|spelling|word) is)(?: actually)? )?"+RF_NAME+'$',x:2,y:1}
+].map(function(p){p.rx=new RegExp(p.re,'iu');return p;});
+var RF_H=[
+  '\\b(?:only|just) (?:the )?'+RF_N+' (?:people|persons|person|of us|speakers|voices|guys|humans|folks|talkers)\\b',
+  "\\bthere(?: were| was| are| is|'s|'re)(?: (?:only|just|really|actually|truly))* "+RF_N+'(?: (?:of us|people|persons|speakers|voices|guys|folks)\\b|$)',
+  '\\bwe (?:had|were|are|have)(?: (?:only|just|really|actually))* '+RF_N+'(?: (?:people|persons|person|speakers|voices|of us|in total|total|in the room|here|there|talking))?$',
+  '\\b'+RF_N+' (?:people|persons|person|speakers|voices|of us)(?: (?:only|total|in total|max|at most))? (?:talked|talking|spoke|speaking|were talking|'+
+    'were speaking|were there|were here|were in|was in|in (?:the|this)|on (?:the|this)|total|in total|max|at most|only)\\b',
+  '\\b'+RF_N+' (?:people|persons|person|speakers|voices),? not '+RF_N+'\\b',
+  '\\b(?:should|must|needs to|has to) (?:be|have|show)(?: (?:only|just))? '+RF_N+' (?:people|persons|person|speakers|voices)\\b',
+  '\\bthere should be(?: (?:only|just))? '+RF_N+'\\b',
+  "\\b(?:it'?s|its|it is|it was)(?: (?:only|just|really|actually))* "+RF_N+' (?:people|persons|person|speakers|voices|of us)\\b'
+].map(function(r){return new RegExp(r,'iu');});
+var RF_MEAND=/\b(?:it was|there was|there were|only|just|it's|its)(?: (?:only|just|really))* (?:me|myself)(?:,| and) (.+)$/iu;
+var RF_ANDME=/\b(?:only|just|it was|it's|its)(?: (?:only|just|really))* (.+?) and (?:me|myself|i)\b/iu;
+var RF_WH=/^(?:who|whom|whose|what|whats|what's|when|where|wheres|where's|why|how|hows|how's|which|whos|who's)\b/i;
+var RF_AUX=/^(?:is|are|was|were|do|does|did|can|could|would|will|should|shall|has|have|had|may|might|isn't|aren't|wasn't|weren't|don't|doesn't|didn't|can't|couldn't|won't|wouldn't|shouldn't)\b/i;
+var RF_EXPL=/\b(?:change|replace|rename|correct|swap)\b.*\b(?:to|into|with|for|as)\b|\b(?:is|are) (?:spelled|spelt)\b|\bspell\b.*\b(?:as|like)\b|->|=>|→/i;
+var RF_FILL=/^(?:no|nope|nah|actually|sorry|oops|wait|well|ok|okay|so|and|also|but|hey|btw|fyi|um|uh|oh|yeah|yes|hmm|ah|please|pls|by the way|just so you know|heads up)(?:\s*[,:;!.-]+\s*|\s+)/i;
+var RF_TAG=/^(?:one more thing|another one|one more|quick fix|small fix|correction|fix|typo|spelling|note|edit)\s*[,:;!.-]+\s*/i;
+// The words the fix reader listens for before it asks the AI (the rules came first and found nothing).
+var RF_SIGNAL=/\b(?:not|wrong|misspel\w*|mis-spel\w*|spell(?:ed|t|ing)?|should be|should say|actually|change|fix|replace|instead|typo|speakers?|people|persons|voices?|of us|same person|same guy|is me|are me|me and|and me|join|merge|split|rename|name(?:'s| is| was)|keeps? (?:writing|saying|spelling)|(?:it|transcript|note) (?:says|said|shows|writes))\b|n't\b|->|=>|→|=/i;
+
+function rfClean(t){return String(t==null?'':t).normalize('NFC').replace(/[‘’ʼ`´]/g,"'").replace(/[“”]/g,'"').replace(/\s+/g,' ').trim();}
+function rfLead(t){
+  var x=String(t||'').trim(),y;
+  do{y=x;x=x.replace(RF_FILL,'').replace(RF_TAG,'').trim();}while(x!==y);
+  return x;
+}
+function rfSentences(t){
+  var out=[],cur='',i,c;
+  for(i=0;i<t.length;i++){
+    c=t[i];cur+=c;
+    if(/[.!?;]/.test(c)&&(i+1>=t.length||/\s/.test(t[i+1]))){
+      if(c==='.'&&/(?:^|\s)(?:st|jr|sr|mt|ft|dr|mr|mrs|ms)\.$/i.test(cur))continue;
+      if(cur.trim())out.push(cur.trim());cur='';
+    }
+  }
+  if(cur.trim())out.push(cur.trim());
+  return out;
+}
+function rfTrimName(t){
+  t=String(t||'').replace(/^["'(]+|["')]+$/g,'').trim();
+  var tk=t.split(' ');
+  for(var i=0;i<tk.length-1;i++)if(/\p{L}'s$/iu.test(tk[i])){t=tk.slice(0,i+1).join(' ');break;}
+  t=t.replace(/'s$/i,'');
+  if(/\.$/.test(t)&&!/(?:^|\s)(?:st|jr|sr|mt|ft|dr|mr|mrs|ms)\.$/i.test(t))t=t.replace(/\.+$/,'');
+  return t.replace(/[,;:]+$/,'').trim();
+}
+// A name Cory typed: has a letter, no lowercase function words (a capital word inside a phrase may be a name: "Will").
+var RF_PART={da:1,de:1,del:1,della:1,der:1,di:1,du:1,la:1,le:1,van:1,von:1,den:1,ten:1,ter:1,bin:1,ibn:1,al:1,el:1,st:1,y:1};
+function rfOkName(t,atStart){
+  if(!t||t.length>60||!/\p{L}/u.test(t)||GENERIC_RE.test(t))return false;
+  var toks=t.split(' '),capd=/\p{Lu}/u.test(t);
+  for(var i=0;i<toks.length;i++){
+    var k=toks[i],lk=k.toLowerCase().replace(/[.']+$/,''),up=/^\p{Lu}/u.test(k);
+    if(RF_STOP[lk]&&(atStart&&i===0||!up))return false;
+    if(capd&&toks.length>1&&!up&&!/^[\p{N}#]/u.test(k)&&!RF_PART[lk])return false;
+  }
+  return true;
+}
+function rfNumber(w){var v=RF_NUM[String(w).toLowerCase()]||parseInt(w,10);return v>=1&&v<=12?v:0;}
+// Name-like words of a note (from the transcript): written with a capital, never all lowercase, not a common word,
+// and seen mid-sentence or at least twice. Runs of two or three such words count as one name too ("Rian Othus").
+function rfTokens(t){
+  var out=[],re=/[\p{L}\p{N}][\p{L}\p{N}_'’-]*/gu,m,last=0,start=true;
+  while((m=re.exec(t))){
+    if(/[.!?]/.test(t.slice(last,m.index)))start=true;
+    out.push({w:m[0].replace(/['’]s$/i,'').replace(/['’-]+$/,''),start:start,gap:t.slice(last,m.index)});
+    start=false;last=m.index+m[0].length;
+  }
+  return out;
+}
+function nameWords(s){
+  var info={},runs={};
+  function o(lc){return info[lc]||(info[lc]={forms:{},cap:0,mid:0,low:0});}
+  (s.segs||[]).forEach(function(seg){
+    var toks=rfTokens(String(seg.text||'')),run=[];
+    function endRun(){
+      var rw=run.map(function(x){return x.w.toLowerCase();});
+      // a run that only repeats one word ("Bernie Bernie") is a stutter, not a name
+      if(run.length>=2&&run.length<=3&&rw.some(function(w,i){return rw.indexOf(w)===i&&i>0;})){
+        var k=run.map(function(x){return x.w;}).join(' '),r=runs[k]||(runs[k]={n:0,mid:0});r.n++;if(!run[0].start)r.mid++;}
+      run=[];
+    }
+    toks.forEach(function(k,i){
+      var w=k.w,lc=w.toLowerCase(),capd=/^\p{Lu}/u.test(w);
+      if(w.length<2||/[\p{N}_]/u.test(w)){endRun();return;}
+      var x=o(lc);
+      if(capd){x.cap++;x.forms[w]=(x.forms[w]||0)+1;if(!k.start)x.mid++;}
+      else if(w===lc)x.low++;
+      if(capd&&!RF_STOP[lc]&&(k.gap===' '||!run.length))run.push(k);else{endRun();if(capd&&!RF_STOP[lc])run.push(k);}
+      if(i===toks.length-1)endRun();
+    });
+    endRun();
+  });
+  var out=[];
+  Object.keys(info).forEach(function(lc){
+    var x=info[lc];
+    // a word the note also writes in small letters is a plain word, unless it is capitalized mid-sentence more often
+    if(!x.cap||x.low>=Math.max(1,x.mid)||RF_STOP[lc]||lc.length<2||/^i'/.test(lc)||!(x.mid>=1||x.cap>=2))return;
+    var best='',bn=0;Object.keys(x.forms).forEach(function(f){if(x.forms[f]>bn){best=f;bn=x.forms[f];}});
+    out.push({w:best,n:x.cap,one:true});
+  });
+  Object.keys(runs).forEach(function(k){
+    var r=runs[k],ok=k.split(' ').every(function(w){var x=info[w.toLowerCase()];return x&&x.low<Math.max(1,x.mid);});
+    if(ok&&(r.mid>=1||r.n>=2))out.push({w:k,n:r.n,one:false});
+  });
+  return out.sort(function(a,b){return b.n-a.n||(a.w<b.w?-1:1);});
+}
+function nameList(s,max){return nameWords(s).slice(0,max||120).map(function(x){return x.w;});}
+function rfCtx(s){
+  var labels=noteLabels(s),mine=[],set={};
+  labels.forEach(function(l,i){if(/^cory(?:\s|$)/i.test(l))mine.push(i);});
+  // "me" is the one speaker named Cory (Cory's own app). No such speaker, or two different Corys: "me" is unknown.
+  var me=mine.length&&mine.every(function(i){return labels[i].toLowerCase()===labels[mine[0]].toLowerCase();})?mine[0]:-1;
+  nameWords(s).forEach(function(x){set[x.w.toLowerCase()]=1;});
+  return {labels:labels,me:me,nameSet:set};
+}
+// A speaker named in a message: "Speaker 3", "me", or a speaker's name (full, or first name when only one fits).
+function rfWho(t,ctx){
+  t=rfTrimName(String(t||'').replace(/^(?:the same (?:person|guy|one|speaker) as|the same as|same as|also|really|actually|just|both|all) /i,''));
+  var m=/^speakers?\s*#?\s*(\d{1,2})$/i.exec(t),lt=t.toLowerCase(),hit=[],L=ctx.labels;
+  if(m){var k=+m[1]-1;return k>=0&&k<L.length?{i:k,all:[k]}:{miss:'sp',t:'Speaker '+(+m[1])};}
+  if(/^(?:me|myself|i|mine)$/i.test(t))return ctx.me>-1?{i:ctx.me,all:[ctx.me]}:{miss:'me'};
+  L.forEach(function(l,i){if(l.toLowerCase()===lt)hit.push(i);});
+  if(!hit.length)L.forEach(function(l,i){if(!GENERIC_RE.test(l)&&l.toLowerCase().split(' ')[0]===lt)hit.push(i);});
+  if(hit.length){
+    var one=hit.every(function(i){return L[i].toLowerCase()===L[hit[0]].toLowerCase();});
+    return one?{i:hit[0],all:hit}:{miss:'many',t:t};
+  }
+  // only a typed capital makes an unknown word a name ("Speaker 3 is quiet" is not a fix)
+  return /^\p{Lu}/u.test(t)&&rfOkName(t,false)?{miss:'name',t:t}:null;
+}
+function rfMeHint(sp){
+  return 'No speaker in this note is named Cory, so the app can’t tell which one is you.'+
+    (sp!=null?' To name '+sp+' as you, tap them on the Transcript tab and type Cory.':' Name your speaker Cory on the Transcript tab, then try again.');
+}
+// Speakers that are the same person: the one named speaker takes the rest; with no names, the lowest number does.
+function rfSame(idx,ctx,left){
+  var L=ctx.labels,named=idx.filter(function(i){return !GENERIC_RE.test(L[i]);}),nm={};
+  named.forEach(function(i){nm[L[i].toLowerCase()]=1;});
+  if(Object.keys(nm).length>1){left.push(joinAnd(named.map(function(i){return quo(L[i]);}))+' have different names, so the app did not join them.');return [];}
+  var into=named.length?named[0]:Math.min.apply(null,idx);
+  return idx.filter(function(i){return i!==into;}).map(function(i){return [i,into];});
+}
+function rfJoins(x,ctx){
+  var t=x.replace(/\bi'm\b/gi,'I am').replace(/\bthey're\b/gi,'they are').replace(/\bwe're\b/gi,'we are'),m,left=[],joins=[],L=ctx.labels;
+  // Speaker 3 and 4 are me / Speakers 3, 4 and 5 are Rian
+  m=/^(?:the )?speakers? ?#?\s*(\d{1,2}(?:\s*(?:,|and|&|\+)\s*(?:speaker\s*#?\s*)?\d{1,2})+) (?:are|were|is)(?: (?:both|all|also|really|actually|just))* (.+?)(?: (?:too|also|as well))?$/i.exec(t);
+  if(m&&!/^(?:(?:the )?same(?: (?:person|guy|speaker|voice|one|people))?|one(?: and the same)?(?: (?:person|guy|speaker|voice))?)$/i.test(m[2])){
+    var nums=m[1].match(/\d{1,2}/g).map(Number),idx=[],tg=rfWho(m[2],ctx);
+    if(!tg)return null;
+    nums.forEach(function(n){if(n>=1&&n<=L.length){if(idx.indexOf(n-1)<0)idx.push(n-1);}else left.push(quo('Speaker '+n)+' is not a speaker in this note.');});
+    if(tg.i!=null)idx.forEach(function(i){if(i!==tg.i)joins.push([i,tg.i]);});
+    else{
+      if(idx.length>=2)joins=rfSame(idx,ctx,left);
+      var first=idx.length?spkLabelOf(L,joins.length?joins[0][1]:idx[0]):null;
+      if(tg.miss==='me')left.push(rfMeHint(first));
+      else if(tg.miss==='name')left.push(quo(tg.t)+' is not a speaker name in this note.'+(first?' To name '+first+', tap them on the Transcript tab.':''));
+      else left.push(quo(tg.t||'')+' is not a speaker in this note.');
+    }
+    return {joins:joins,left:left};
+  }
+  // Speaker 3 is me / Speaker 3 is Speaker 1 / Speaker 3 is the same person as Rian
+  m=/^(?:the )?speaker\s*#?\s*(\d{1,2}) (?:is|was|=|should be|belongs to|goes with|goes into|joins|should join|is part of)((?: (?:also|really|actually|just|the same (?:person|guy|one|speaker) as|the same as|same as))*) (.+?)(?: (?:too|also|as well|again))?$/i.exec(t);
+  if(m){
+    var tw=rfWho(m[3],ctx),fi=+m[1]-1;
+    if(!tw)return null;
+    if(!(fi>=0&&fi<L.length)){left.push(quo('Speaker '+(+m[1]))+' is not a speaker in this note.');return {joins:[],left:left};}
+    if(tw.i!=null){if(tw.i!==fi)joins.push([fi,tw.i]);else left.push(L[fi]+' is already that speaker, so there is nothing to join.');}
+    else if(tw.miss==='me')left.push(rfMeHint(L[fi]));
+    else if(tw.miss==='name')left.push(quo(tw.t)+' is not a speaker name in this note. To name '+L[fi]+', tap them on the Transcript tab.');
+    else left.push(quo(tw.t||'')+' is not a speaker in this note.');
+    return {joins:joins,left:left};
+  }
+  // I am Speaker 3 / Rian is Speaker 3 too
+  m=/^(.+?) (?:is|am|was|=)(?: (?:also|really|actually|just))* speaker\s*#?\s*(\d{1,2})(?: (?:too|also|as well|again))?$/i.exec(t);
+  if(m){
+    var tl=rfWho(m[1],ctx),f2=+m[2]-1;
+    if(!tl)return null;
+    if(!(f2>=0&&f2<L.length)){left.push(quo('Speaker '+(+m[2]))+' is not a speaker in this note.');return {joins:[],left:left};}
+    if(tl.i!=null){if(tl.i!==f2)joins.push([f2,tl.i]);else left.push(L[f2]+' is already that speaker, so there is nothing to join.');}
+    else if(tl.miss==='me')left.push(rfMeHint(L[f2]));
+    else if(tl.miss==='name')left.push(quo(tl.t)+' is not a speaker name in this note. To name '+L[f2]+', tap them on the Transcript tab.');
+    else left.push(quo(tl.t||'')+' is not a speaker in this note.');
+    return {joins:joins,left:left};
+  }
+  // Speaker 3 and Rian are the same person / the two Rian Othus are the same person
+  m=/^(.+?) (?:are|were|is)(?: (?:all|both|really|actually|just))* (?:(?:the )?same(?: (?:person|guy|speaker|voice|one|people))?|one(?: and the same)?(?: (?:person|guy|speaker|voice))?)$/i.exec(t);
+  if(m){
+    var g=m[1].replace(/^(?:the |both |all )?(?:(?:two|2|three|3|both) )?/i,''),items=g.split(/\s*(?:,|&|\band\b)\s*/i).filter(Boolean),ix=[],bad=false;
+    items.forEach(function(it){
+      var w=/^\d{1,2}$/.test(it)?rfWho('Speaker '+it,ctx):rfWho(it,ctx)||rfWho(it.replace(/s$/i,''),ctx);
+      if(!w||w.i==null){bad=w;return;}
+      w.all.forEach(function(i){if(ix.indexOf(i)<0)ix.push(i);});
+    });
+    if(bad===null)return null;
+    if(bad){left.push(bad.miss==='me'?rfMeHint(null):quo(bad.t||'')+' is not a speaker in this note.');return {joins:[],left:left};}
+    if(ix.length<2){left.push('Only one speaker in this note fits '+quo(g)+', so there is nothing to join.');return {joins:[],left:left};}
+    return {joins:rfSame(ix,ctx,left),left:left};
+  }
+  return null;
+}
+function spkLabelOf(L,i){return L[i]||('Speaker '+(i+1));}
+// "me and Rian" style lists: 1 + the people named. A group word ("the team") means the count is unknown.
+function rfList(t){
+  var items=String(t).split(/\s*(?:,|&|\band\b)\s*/i),n=0,i,toks,k;
+  for(i=0;i<items.length;i++){
+    toks=items[i].replace(/^(?:my|our|his|her|their) /i,'').split(' ');k=0;
+    if(RF_GROUP.test(items[i]))return 0;
+    while(k<toks.length&&k<3&&toks[k]&&!RF_STOP[toks[k].toLowerCase()])k++;
+    if(!k)break;
+    n++;
+    if(k<toks.length)break;
+  }
+  return n;
+}
+function rfMeAnd(t){
+  var m=RF_MEAND.exec(t),n;
+  if(m&&(n=rfList(m[1])))return 1+n;
+  m=RF_ANDME.exec(t);
+  if(m&&(n=rfList(m[1])))return 1+n;
+  return 0;
+}
+function rfPeople(x){
+  for(var i=0;i<RF_H.length;i++){var m=RF_H[i].exec(x);if(m){var v=rfNumber(m[1]);if(v)return v;}}
+  var c=rfMeAnd(x);
+  return c>=1&&c<=12?c:0;
+}
+// More wrong spellings for the right one just read: "..., not Birdie", "Birdie is wrong too". A plain "her name is
+// Birdy" sets the right one for a "not Bernie" after it.
+var RF_MORE=new RegExp('^(?:(?:and|or|but|nor) )?(?:also )?(?:not|nor|or) '+RF_NAME+'(?: (?:either|too|as well))?$|'+
+  '^(?:the )?'+RF_NAME+' (?:is|was) (?:also )?(?:wrong|misspelled|misspelt|a typo|not right|incorrect|spelled wrong)(?: too| as well| also)?$','iu');
+var RF_DECL=new RegExp("^(?:(?:her|his|their|the|my|our) )?(?:name'?s|name is|name was|real name is|right name is|right spelling is|spelling is)"+
+  "(?: actually| really)? "+RF_NAME+'$','iu');
+function rfWrong(Y,X,txt,ctx,bare){
+  var lt=txt.toLowerCase();
+  if(!rfOkName(Y,lt.indexOf(Y.toLowerCase())===0))return null;
+  // "all the Bernies" -> Bernie, when only the single form is in the note
+  if(/s$/i.test(Y)&&!ctx.nameSet[Y.toLowerCase()]&&ctx.nameSet[Y.slice(0,-1).toLowerCase()])Y=Y.slice(0,-1);
+  if(Y===X)return null;
+  if(bare&&!ctx.nameSet[Y.toLowerCase()])return null;
+  if(!/^\p{Lu}/u.test(Y)&&!ctx.nameSet[Y.toLowerCase()])return null;
+  return Y;
+}
+var RF_TAIL=/\s+(?:everywhere|every time|each time|throughout|all the way through|please|pls|thanks|thank you|in (?:the|this) (?:whole )?(?:transcript|note|recording|summary))$/i;
+function rfWordAt(txt,ctx){
+  var y0;do{y0=txt;txt=txt.replace(RF_TAIL,'');}while(txt!==y0);
+  for(var i=0;i<RF_WP.length;i++){
+    var p=RF_WP[i],m=p.rx.exec(txt);if(!m)continue;
+    var X=rfTrimName(m[p.x]),lt=txt.toLowerCase(),ys=String(m[p.y]).split(/ (?:or|nor|and) /i),pairs=[],ok=true;
+    if(!rfOkName(X,lt.indexOf(X.toLowerCase())===0))continue;
+    ys.forEach(function(y){
+      var Y=rfWrong(rfTrimName(y),X,txt,ctx,p.bare);
+      if(!Y){ok=false;return;}
+      // "all the Bernies, not the Birdys": a plural right follows its wrong word back to the single form
+      var x=(Y!==rfTrimName(y)&&/s$/i.test(X)&&X.length>2)?X.slice(0,-1):X;
+      if(!pairs.some(function(q){return q.wrong.toLowerCase()===Y.toLowerCase();}))pairs.push({wrong:Y,right:x});
+    });
+    if(!ok||!pairs.length)continue;
+    return {pairs:pairs,right:X,carry:p.carry||''};
+  }
+  return null;
+}
+function rfMore(txt,right,ctx){
+  var m=RF_MORE.exec(txt);if(!m)return null;
+  var Y=rfWrong(rfTrimName(m[1]||m[2]),right,txt,ctx,false);
+  return Y?{pairs:[{wrong:Y,right:right}],right:right,carry:''}:null;
+}
+// Word fixes: each sentence is cut at commas and "and"; neighbouring parts are tried together, longest first.
+function rfWords(work,ctx){
+  var parts=[],out=[],SEP=/\s*[,;:]\s*(?:(?:and|also|plus|then) )*|\s+(?:and|also|plus|then)\s+(?:(?:and|also|plus|then) )*/gi;
+  work.forEach(function(w,wi){
+    var re=new RegExp(SEP.source,'gi'),last=0,m,sep=wi?', ':'';
+    while((m=re.exec(w.t))){
+      if(!m[0]){re.lastIndex++;continue;}
+      parts.push({t:w.t.slice(last,m.index),sep:sep,w:w});sep=m[0];last=m.index+m[0].length;
+    }
+    parts.push({t:w.t.slice(last),sep:sep,w:w});
+  });
+  var i=0,carry='',right='';
+  while(i<parts.length){
+    var hit=null,j,k,txt,one=rfLead(parts[i].t);
+    for(j=Math.min(parts.length-1,i+5);j>=i&&!hit;j--){
+      txt=parts[i].t;for(k=i+1;k<=j;k++)txt+=parts[k].sep+parts[k].t;
+      hit=rfWordAt(rfLead(txt),ctx);
+      if(!hit&&j===i&&carry)hit=rfWordAt(carry+one,ctx);
+      if(!hit&&j===i&&right)hit=rfMore(one,right,ctx);
+      if(hit){
+        hit.pairs.forEach(function(q){out.push(q);});
+        for(k=i;k<=j;k++){parts[k].w.hit=true;parts[k].used=true;}
+        carry=hit.carry||carry;right=hit.right;i=j+1;
+      }
+    }
+    if(!hit){
+      var d=RF_DECL.exec(one),r=d&&rfTrimName(d[1]);
+      if(r&&rfOkName(r,false)){right=r;carry='';}else{carry='';}
+      i++;
+    }
+  }
+  parts.forEach(function(p){
+    var x=rfLead(p.t);
+    if(!p.used&&/^(?:tell me|show me|explain|list|summarize|give me|what|who|whom|whose|why|how|when|where|which)\b/i.test(x))(p.w.loose=p.w.loose||[]).push(x);
+  });
+  return out;
+}
+// The reading of one message: {fix: <classifier shape> or null, question: true when every sentence is a question}.
+// "Can you redo the summary?" asks the app to do something: it is not sent on as a question to answer.
+var RF_REQ=/^(?:can|could|would|will) you\b(?! (?:tell|say|explain|list|show|find|see|check)\b)/i;
+function rfRead(text,s){
+  var ctx=rfCtx(s),t=rfClean(text),res={kind:'fix',words:[],people:0,joins:[],left:[]},any=false,asks=0,total=0,work=[],rest=[];
+  function addJ(jn){
+    any=true;res.left=res.left.concat(jn.left);
+    jn.joins.forEach(function(j){if(!res.joins.some(function(k){return k.from===j[0]+1;}))res.joins.push({from:j[0]+1,into:j[1]+1});});
+  }
+  function addW(w){if(!res.words.some(function(x){return x.wrong.toLowerCase()===w.wrong.toLowerCase();}))res.words.push({wrong:w.wrong,right:w.right});}
+  function askish(c){return RF_WH.test(c)||RF_AUX.test(c)||/^(?:if|whether|or)\b/i.test(c);}
+  function cut(x){return x.split(/\s*,\s*/).map(function(c){return rfLead(c);}).filter(Boolean);}
+  rfSentences(t).forEach(function(raw){
+    var x=rfLead(raw.replace(/[\s.!?;:,]+$/,''));if(!x)return;
+    total++;
+    var asky=/\?\s*$/.test(raw)||RF_WH.test(x);
+    if(asky&&!RF_EXPL.test(x)){
+      // a question, unless a clause before or after it is a clear fix ("Speaker 3 is me, and what did I promise Nick?")
+      var got=false,qs=[],cl=cut(x);
+      if(cl.length>1)cl.forEach(function(c){
+        if(askish(c)){qs.push(c);return;}
+        var jn=rfJoins(c,ctx),p,w;
+        if(jn){addJ(jn);got=true;return;}
+        if((p=rfPeople(c))){if(!res.people)res.people=p;got=true;return;}
+        if((w=rfWordAt(c,ctx))){addW(w);got=true;return;}
+        qs.push(c);
+      });
+      if(got){if(qs.length)rest.push(qs.join(', ')+'?');}
+      else{asks++;if(!RF_REQ.test(x))rest.push(raw);}
+      return;
+    }
+    var jn=rfJoins(x,ctx);
+    if(jn){addJ(jn);return;}
+    if(/,/.test(x)){
+      // "only two people talked, Speaker 3 and 4 are me": a join clause is read on its own, the rest goes on
+      var left=[],hit=false;
+      cut(x).forEach(function(c){var j=rfJoins(c,ctx);if(j){addJ(j);hit=true;}else left.push(c);});
+      if(hit){x=left.join(', ');if(!x)return;}
+    }
+    var p=rfPeople(x);
+    if(p&&!res.people)res.people=p;
+    work.push({t:x,raw:raw,ask:asky||RF_AUX.test(x),p:!!p});
+  });
+  rfWords(work,ctx).forEach(addW);
+  work.forEach(function(w){
+    if(w.ask&&!w.p&&!w.hit){asks++;if(!RF_REQ.test(w.t))rest.push(w.raw);}
+    else if(w.hit&&w.loose){var lz=w.loose.join(', ');rest.push(lz.charAt(0).toUpperCase()+lz.slice(1)+(/^(?:tell|show|explain|list|summarize|give)\b/i.test(lz)?'.':'?'));}
+  });
+  if(!any&&!res.words.length&&!res.people)return {fix:null,question:total>0&&asks===total};
+  return {fix:res,question:false,rest:rest.join(' ').trim()};
+}
+function readFix(text,s){return rfRead(text,s).fix;}
+// Numbers Cory typed (not speaker numbers), plus a "me and X" count: the only head counts the AI may give back.
+function rfNums(t){
+  var u=String(t).replace(/\bspeakers?\s*#?\s*\d{1,2}(?:\s*(?:,|and|&|\+)\s*(?:speaker\s*#?\s*)?\d{1,2})*/gi,' ');
+  var out=[],re=new RegExp('\\b'+RF_N+'\\b','giu'),m,v;
+  while((m=re.exec(u)))if((v=rfNumber(m[1])))out.push(v);
+  if((v=rfMeAnd(u)))out.push(v);
+  if(/\bboth of us\b/i.test(u))out.push(2);
+  if(/\b(?:just|only) me\b(?! and)/i.test(u))out.push(1);
+  return out;
+}
+// The words or phrase as Cory typed it (his casing), or '' when he never typed it.
+function rfTyped(w,t){
+  w=rfTrimName(rfClean(w));
+  if(!w||w.length>60)return '';
+  var m=wordRe(w,'iu').exec(t);
+  return m?m[2]:'';
+}
+// Speakers Cory named in his message (by number, by name, or "me").
+function rfSaid(text,labels){
+  var t=rfClean(text),said=labels.map(function(){return false;}),nums=[],me=-1,mine=[];
+  (t.match(new RegExp('\\bspeakers?\\s*#?\\s*'+RF_N+'(?:\\s*(?:,|and|&|\\+)\\s*(?:speaker\\s*#?\\s*)?'+RF_N+')*','giu'))||[]).forEach(function(r){
+    (r.match(new RegExp(RF_N,'giu'))||[]).forEach(function(n){var v=rfNumber(n);if(v)nums.push(v);});});
+  labels.forEach(function(l,i){if(/^cory(?:\s|$)/i.test(l))mine.push(i);});
+  labels.forEach(function(l,i){
+    if(GENERIC_RE.test(l))said[i]=nums.indexOf(i+1)>-1;
+    else said[i]=wordRe(l).test(t)||wordRe(l.split(' ')[0]).test(t)||nums.indexOf(i+1)>-1;
+    if(mine.indexOf(i)>-1&&/\b(?:me|myself|mine|i|i'm)\b/i.test(t))said[i]=true;
+  });
+  return said;
+}
+// The app's own check of a door 1 answer (the same checks the mini makes; the mini is never trusted blindly).
+// Every "right" must be words Cory typed (his casing wins); every "wrong" a name-like word of the note or typed;
+// a head count only when he typed that number or a "me and X" list; joins 1..n, no self, no chains, no duplicates.
+// Nothing left from a "fix" answer = a question.
+function checkFix(d,text,labels,names){
+  if(!d||typeof d!=='object'||d.ok!==true)return null;
+  if(d.paused===true)return {kind:'paused'};
+  if(d.kind!=='fix')return {kind:'question'};
+  var t=rfClean(text),n=labels.length,out={kind:'fix',words:[],people:0,joins:[],left:[]},nm={};
+  (names||[]).forEach(function(x){nm[String(x).toLowerCase()]=1;});
+  (Array.isArray(d.words)?d.words:[]).slice(0,12).forEach(function(w){
+    if(!w||typeof w!=='object'||typeof w.right!=='string'||typeof w.wrong!=='string')return;
+    var r=rfTyped(w.right,t),g=rfTrimName(rfClean(w.wrong));
+    if(!r||!/\p{L}/u.test(r)||GENERIC_RE.test(r)||!g||g.length>60||!/\p{L}/u.test(g))return;
+    if(!nm[g.toLowerCase()]&&!rfTyped(g,t))return;
+    if(g.toLowerCase()===r.toLowerCase())return;
+    if(out.words.some(function(x){return x.wrong.toLowerCase()===g.toLowerCase();}))return;
+    out.words.push({wrong:g,right:r});
+  });
+  var p=typeof d.people==='number'?d.people:parseInt(d.people,10);
+  if(p>=1&&p<=12&&p===Math.floor(p)&&rfNums(t).indexOf(p)>-1)out.people=p;
+  var js=[];
+  (Array.isArray(d.joins)?d.joins:[]).slice(0,12).forEach(function(j){
+    if(!j||typeof j!=='object')return;
+    var f=Number(j.from),i=Number(j.into);
+    if(!(f===Math.floor(f)&&i===Math.floor(i)&&f>=1&&f<=n&&i>=1&&i<=n)||f===i)return;
+    if(js.some(function(k){return k.from===f;}))return;
+    js.push({from:f,into:i});
+  });
+  out.joins=js.filter(function(j){return !js.some(function(k){return k!==j&&(k.into===j.from||k.from===j.into);});});
+  if(!out.words.length&&!out.people&&!out.joins.length)return {kind:'question'};
+  return out;
+}
+function rfLev(a,b){
+  if(Math.abs(a.length-b.length)>3)return 9;
+  var prev=[],cur,i,j;
+  for(j=0;j<=b.length;j++)prev[j]=j;
+  for(i=1;i<=a.length;i++){
+    cur=[i];
+    for(j=1;j<=b.length;j++)cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));
+    prev=cur;
+  }
+  return prev[b.length];
+}
+function rfStart(a,b){var x=a.charAt(0),y=b.charAt(0);return x===y||/[ck]/.test(x)&&/[ck]/.test(y);}
+// Close spellings in the note: name-like words within 2 edits of Cory's spelling or 1 of the wrong word, 4+ letters,
+// same first letter (c/k count as one). Each becomes its own ticked card row. Speaker names and plurals never do.
+function rfClose(s,words,labels){
+  var out=[],nw=nameWords(s).filter(function(x){return x.one;}),lab={};
+  labels.forEach(function(l){l.toLowerCase().split(/\s+/).forEach(function(k){lab[k]=1;});});
+  (words||[]).forEach(function(w){
+    var r=String(w.right).toLowerCase(),g=String(w.wrong).toLowerCase();
+    if(/\s/.test(r)||/\s/.test(g))return;
+    nw.forEach(function(x){
+      var c=x.w.toLowerCase();
+      if(c.length<4||c===r||c===g||lab[c]||/[\p{N}_]/u.test(c))return;
+      if(c===r+'s'||c===g+'s'||c===r+'es'||c===g+'es')return;
+      if(!rfStart(c,r)&&!rfStart(c,g))return;
+      if(rfLev(c,r)>2&&rfLev(c,g)>1)return;
+      if(out.some(function(o){return o.from.toLowerCase()===c;})||words.some(function(o){return String(o.wrong).toLowerCase()===c;}))return;
+      out.push({from:x.w,to:w.right,found:true});
+    });
+  });
+  return out;
+}
+function quo(t){return '“'+t+'”';}
+function joinAnd(a){return a.length<2?(a[0]||''):a.slice(0,-1).join(', ')+' and '+a[a.length-1];}
+// </rules>
+
+/* ---------- fix cards (EDITS 2026-10-13, ASK2 2026-10-14) ---------- */
+// Nothing changes until Apply. The app counts every match itself. Joins change one note only and never teach the
+// mini's voice memory (s.joined keeps naming inside the note). One level of Undo across all cards.
+var EDIT_KEYS=['segs','spkNames','summary','deep','joined','resplit','mismatch'];
 function editList(p){
-  return (p.words||[]).map(function(w){return w.from+' -> '+w.to;})
+  return (p.words||[]).map(function(w){return (w.seen||w.from)+' -> '+(w.show||w.to);})
     .concat((p.speakers||[]).map(function(j){return j.from+' into '+j.into;})).join('; ');
 }
 function chatLine(m){
   if(m.role==='edit')return 'A: (a fix card, '+(m.status||'pending')+': '+editList(m.plan||{})+')';
+  if(m.role==='split')return 'A: (a card to split this note into '+m.people+' voices, '+(m.status||'pending')+')';
   return (m.role==='user'?'Q: ':'A: ')+m.text;
 }
-function quo(t){return '“'+t+'”';}
 function nPlaces(n){return n===1?'1 place':n+' places';}
 function nLines(n){return n===1?'1 line':n+' lines';}
-function joinAnd(a){return a.length<2?(a[0]||''):a.slice(0,-1).join(', ')+' and '+a[a.length-1];}
-
-// Only the shape the app asked for survives; everything else from the AI is ignored.
-function editReq(j){
-  function str(v,max){return typeof v==='string'?v.replace(/\s+/g,' ').trim().slice(0,max||80):'';}
-  function list(a,k1,k2){
-    var out=[];
-    (Array.isArray(a)?a:[]).forEach(function(x){if(x&&typeof x==='object'&&out.length<20)out.push([str(x[k1]),str(x[k2])]);});
-    return out;
-  }
-  return {words:list(j.words,'from','to').map(function(p){return {from:p[0],to:p[1]};}),
-    speakers:list(j.speakers,'from','into').map(function(p){return {from:p[0],into:p[1]};}),
-    guessed:j.guessed===true,say:str(j.say,300)};
+function nMins(n){return n===1?'1 minute':n+' minutes';}
+function cap1(t){return t.charAt(0).toUpperCase()+t.slice(1);}
+function isMiniNote(s){return !!s&&s.source==='Plaud'&&/^plaud_of_[0-9a-f]{32}$/.test(String(s.id));}
+function miniId(s){return String(s.id).replace(/^plaud_/,'');}
+// A spelling typed all in lowercase takes a capital where the word it replaces had one; any capital Cory typed is kept.
+function caseLike(to,spot){
+  if(/\p{Lu}/u.test(to)||!/^\p{Lu}/u.test(String(spot||'')))return to;
+  return to.replace(/(^|\s)(\p{Ll})/gu,function(m,a,b){return a+b.toUpperCase();});
 }
 // Every string in a summary or insights object, rebuilt through fn (the "kind" tag is not text).
 function mapText(v,fn,key){
@@ -1786,18 +2336,21 @@ function mapText(v,fn,key){
   return v;
 }
 // All word fixes in one pass, longest first, whole words, any case: one fix never rewrites another's result.
+// A row the app found itself (a close spelling) only takes spots written with a capital.
 function wordFx(list){
   var by=list.slice().sort(function(a,b){return b.from.length-a.from.length;});
   return {list:by.map(function(w){return {w:w,re:new RegExp('^'+reEsc(w.from)+'$','iu')};}),
     re:new RegExp('(^|[^\\p{L}\\p{N}_])('+by.map(function(w){return reEsc(w.from);}).join('|')+')(?![\\p{L}\\p{N}_])','giu')};
 }
-// tally(w) runs once per real change; a spot already spelled exactly right is not a change.
+// tally(w, spot, possessive) runs once per real change; a spot already spelled exactly right is not a change.
 function swapWords(t,fx,tally){
-  return t.replace(fx.re,function(m,pre,word){
+  return t.replace(fx.re,function(m,pre,word,off,str){
     for(var i=0;i<fx.list.length;i++)if(fx.list[i].re.test(word)){
-      if(word===fx.list[i].w.to)return m;
-      if(tally)tally(fx.list[i].w);
-      return pre+fx.list[i].w.to;
+      var w=fx.list[i].w,to=caseLike(w.to,word);
+      if(w.found&&!/^\p{Lu}/u.test(word))return m;
+      if(word===to)return m;
+      if(tally)tally(w,word,/^['’]s(?![\p{L}\p{N}_])/iu.test(str.slice(off+m.length)));
+      return pre+to;
     }
     return m;
   });
@@ -1817,7 +2370,7 @@ function joinMap(labels,joins){
 // into the old "Speaker 2". Longest labels first, whole words only.
 function relabel(v,pairs){
   if(v==null||!pairs.length)return v;
-  function tok(i){return ''+String.fromCharCode(0xE100+i)+'';}
+  function tok(i){return ''+String.fromCharCode(0xE100+i)+'';}
   var order=pairs.map(function(p,i){return i;}).sort(function(a,b){return pairs[b].from.length-pairs[a].from.length;});
   return mapText(v,function(t){
     order.forEach(function(i){t=t.replace(wordRe(pairs[i].from,'giu'),function(m,pre){return pre+tok(i);});});
@@ -1825,44 +2378,60 @@ function relabel(v,pairs){
     return t;
   });
 }
+// A speaker as the card shows it: a name two speakers share also gets its number.
+function joinLabel(labels,i){
+  var l=labels[i],twice=labels.filter(function(x){return x.toLowerCase()===String(l).toLowerCase();}).length>1;
+  return twice?l+' (speaker '+(i+1)+')':l;
+}
 // What a fix would change in this note right now, counted by the app. Anything that does not fit is left out and said.
+// req: {words:[{from,to,found}], joins:[{fi,ii}] (or the old {speakers:[{from,into}]} by label), guessed, src, left, notes}
 function editPlan(s,req){
-  var labels=noteLabels(s),plan={words:[],remember:[],speakers:[],left:[],guessed:!!req.guessed,say:req.say||''};
+  var labels=noteLabels(s),plan={words:[],remember:[],speakers:[],left:(req.left||[]).slice(),notes:(req.notes||[]).slice(),
+    guessed:!!req.guessed,say:req.say||'',src:req.src||''};
   function lc(t){return String(t).toLowerCase();}
   // a word that is (part of) a speaker label is renamed on the Transcript tab, never by a word fix
   function inLabel(t){return GENERIC_RE.test(t)||labels.some(function(l){return lc(l)===lc(t)||wordRe(t).test(l);});}
-  var cand=[],seen={};
-  req.words.forEach(function(w){
+  var cand=[],seen={},words=req.words||[];
+  words.forEach(function(w){
     var f=w.from,t=w.to;
     if(!f||!t||f===t||seen[lc(f)])return;
-    if(inLabel(f)||GENERIC_RE.test(t)){plan.left.push(quo(f)+' is a speaker name. To name a speaker, tap them on the Transcript tab.');return;}
-    if(req.words.some(function(x){return x.to&&lc(x.to)===lc(f)&&lc(x.to)!==lc(t);})){
+    if(inLabel(f)||GENERIC_RE.test(t)){if(!w.found)plan.left.push(quo(f)+' is a speaker name. To name a speaker, tap them on the Transcript tab.');return;}
+    if(words.some(function(x){return x.to&&lc(x.to)===lc(f)&&lc(x.to)!==lc(t);})){
       plan.left.push(quo(f)+' is also the fix for another word.');return;}
-    seen[lc(f)]=1;cand.push({from:f,to:t,n:0,nT:0,nW:0});
+    seen[lc(f)]=1;cand.push({from:f,to:t,found:!!w.found,n:0,nT:0,nW:0,nP:0,forms:{}});
   });
   if(cand.length){
     var fx=wordFx(cand);
-    s.segs.forEach(function(x){swapWords(x.text,fx,function(w){w.nT++;});});
-    [s.summary,s.deep].forEach(function(v){if(v)mapText(v,function(t){return swapWords(t,fx,function(w){w.nW++;});});});
+    s.segs.forEach(function(x){swapWords(x.text,fx,function(w,spot,pos){w.nT++;if(pos)w.nP++;w.forms[spot]=(w.forms[spot]||0)+1;});});
+    [s.summary,s.deep].forEach(function(v){if(v)mapText(v,function(t){return swapWords(t,fx,function(w,spot,pos){w.nW++;if(pos)w.nP++;});});});
     cand.forEach(function(w){
       w.n=w.nT+w.nW;
-      if(!w.n){plan.left.push(quo(w.from)+' is not in this note.');return;}
+      var best='',bn=0;Object.keys(w.forms).forEach(function(f){if(w.forms[f]>bn){best=f;bn=w.forms[f];}});
+      delete w.forms;
+      if(!w.n){if(!w.found)plan.left.push(quo(w.from)+' is not in this note.');return;}
+      w.seen=best||w.from;w.show=caseLike(w.to,w.seen);w.on=true;
       plan.words.push(w);
-      if(!plan.remember.some(function(r){return lc(r.word)===lc(w.to);}))plan.remember.push({word:w.to,on:true});
+    });
+    // Remember = only Cory's typed spelling (the form the card shows); a close spelling the app found never adds a name
+    plan.words.forEach(function(w){
+      if(!plan.remember.some(function(r){return lc(r.to||r.word)===lc(w.to);}))plan.remember.push({word:w.show,to:w.to,on:true});
     });
   }
-  function idx(t){
-    var hit=[];labels.forEach(function(l,i){if(lc(l)===lc(t))hit.push(i);});
-    return hit.length===1?hit[0]:hit.length?-2:-1;
-  }
-  var joins=[];
-  req.speakers.forEach(function(p){
-    var fi=idx(p.from),ii=idx(p.into),bad=fi<0?p.from:p.into,why=fi<0?fi:ii;
+  var J=[];
+  if(req.joins)req.joins.forEach(function(j){J.push({fi:j.fi,ii:j.ii});});
+  else (req.speakers||[]).forEach(function(p){   // a card saved by build 2026-10-13.2: joins by label
+    var hit=function(t){var h=[];labels.forEach(function(l,i){if(lc(l)===lc(t))h.push(i);});return h.length===1?h[0]:h.length?-2:-1;};
+    var fi=hit(p.from),ii=hit(p.into),bad=fi<0?p.from:p.into,why=fi<0?fi:ii;
     if(fi<0||ii<0){plan.left.push(!bad?'A join was missing a speaker.':why===-2?
       quo(bad)+' is the name of more than one speaker.':quo(bad)+' is not a speaker in this note.');return;}
-    if(fi===ii)return;
-    if(joins.some(function(j){return j.fi===fi;})){plan.left.push(quo(p.from)+' can join only one speaker.');return;}
-    joins.push({from:labels[fi],into:labels[ii],fi:fi,ii:ii,n:0});
+    J.push({fi:fi,ii:ii});
+  });
+  var joins=[];
+  J.forEach(function(j){
+    if(!(j.fi>=0&&j.fi<labels.length&&j.ii>=0&&j.ii<labels.length)){plan.left.push('A join named a speaker this note does not have.');return;}
+    if(j.fi===j.ii)return;
+    if(joins.some(function(k){return k.fi===j.fi;})){plan.left.push(quo(joinLabel(labels,j.fi))+' can join only one speaker.');return;}
+    joins.push({from:joinLabel(labels,j.fi),into:joinLabel(labels,j.ii),fi:j.fi,ii:j.ii,n:0});
   });
   joins.forEach(function(j){
     // a chain (a speaker that goes away and also takes another in) is left out: the card shows plain joins only
@@ -1879,43 +2448,86 @@ function editPlan(s,req){
   return plan;
 }
 function planKey(p){
-  return JSON.stringify([p.words.map(function(w){return [w.from,w.to,w.n,w.nT,w.nW];}),
+  return JSON.stringify([p.words.map(function(w){return [w.from,w.to,w.n,w.nT,w.nW,w.nP];}),
     p.speakers.map(function(j){return [j.from,j.into,j.fi,j.ii,j.n];})]);
 }
-function addEditCard(s,j){
-  var req=editReq(j),plan=editPlan(s,req);
-  if(!plan.words.length&&!plan.speakers.length){
-    s.chat.push({role:'assistant',text:'Nothing in this note matched that fix, so nothing changed.'+
-      (plan.left.length?'\n'+plan.left.join('\n'):'')});
-    return;
-  }
+function addEditCard(s,req){
+  var plan=editPlan(s,req);
+  if(!plan.words.length&&!plan.speakers.length)return {card:false,left:plan.left,notes:plan.notes};
   s.chat.push({role:'edit',req:req,plan:plan,status:'pending',made:Date.now()});
+  return {card:true};
 }
-function editCard(ci){var s=current(),m=s&&s.chat[ci];return (m&&m.role==='edit')?{s:s,m:m}:null;}
+// A fix that was read (by the rules or a checked AI answer) -> cards and plain lines. Nothing changes here.
+function takeFix(s,f,src,q){
+  var labels=noteLabels(s),n=labels.length,nsp=speakerCount(s),said=rfSaid(q,labels),left=(f.left||[]).slice(),notes=[];
+  var words=(f.words||[]).map(function(w){return {from:w.wrong,to:w.right};});
+  rfClose(s,f.words||[],labels).forEach(function(r){words.push(r);});
+  var joins=[],guessed=false,seen={};
+  (f.joins||[]).forEach(function(j){
+    var fi=j.from-1,ii=j.into-1;
+    if(!(fi>=0&&fi<n&&ii>=0&&ii<n)||fi===ii||seen[fi])return;
+    seen[fi]=1;joins.push({fi:fi,ii:ii});
+    // the AI picked a join Cory did not spell out: shown as a guess
+    if(src==='ai'&&!(said[fi]&&said[ii]))guessed=true;
+  });
+  var people=f.people|0,split=0;
+  if(people>0){
+    if(joins.length&&!guessed){
+      var after=nsp-joins.length;
+      if(after!==people)notes.push('You said '+people+(people===1?' person':' people')+'. After these joins this note has '+after+' speakers.');
+    }else if(isMiniNote(s)){
+      joins=[];guessed=false;   // the mini can listen again: better than a guess from words
+      if(people===nsp)notes.push('This note already has '+people+' speakers.');
+      else split=people;
+    }else{
+      var cant=s.source==='Plaud'?'The mini cannot listen again to this recording':'The mini cannot listen again to recordings made on this phone';
+      if(people<nsp)notes.push(guessed&&joins.length?cant+', so these joins are a guess from your words.':
+        cant+'. To join speakers, say which ones, like “Speaker 3 is Speaker 1”.');
+      else notes.push(people===nsp?'This note already has '+people+' speakers.':'This note has '+nsp+' speakers. '+cant+', so it cannot find more voices.');
+    }
+  }
+  var res={card:false,left:left,notes:notes},tried=words.length||joins.length;
+  if(tried)res=addEditCard(s,{words:words,joins:joins,guessed:guessed,src:src,left:left,notes:notes});
+  if(split)addSplitCard(s,split);
+  if(!res.card){
+    var t=(tried?['Nothing in this note matched that fix, so nothing changed.']:[]).concat(res.left||[],res.notes||[]);
+    if(!t.length&&!split)t=['Nothing in this note matched that fix, so nothing changed.'];
+    if(t.length)s.chat.push({role:'assistant',text:t.join('\n')});
+  }
+}
+function cardAt(ci){var s=current(),m=s&&s.chat[ci];return (m&&(m.role==='edit'||m.role==='split'))?{s:s,m:m}:null;}
+function editCard(ci){var c=cardAt(ci);return c&&c.m.role==='edit'?c:null;}
+function takeSnap(s){
+  var snap={};
+  EDIT_KEYS.forEach(function(k){if(k in s)snap[k]=JSON.parse(JSON.stringify(s[k]));});
+  // one level of Undo: only the newest applied card keeps the note as it was
+  s.chat.forEach(function(x){if((x.role==='edit'||x.role==='split')&&x.snap)delete x.snap;});
+  return snap;
+}
 
 function applyEdit(ci){
   var c=editCard(ci);if(!c||busy||c.m.status!=='pending')return;
   var s=c.s,m=c.m;
   if(s.pendingAuto&&pendingBusy){flash('This note is still being written up. Tap Apply when that is done.','warn');return;}
-  var plan=editPlan(s,m.req);
+  var plan=editPlan(s,m.req),lc=function(t){return String(t).toLowerCase();};
+  // keep Cory's ticks and remember choices on a fresh count
+  plan.words.forEach(function(w){(m.plan.words||[]).forEach(function(o){if(lc(o.from)===lc(w.from)&&o.on===false)w.on=false;});});
+  plan.remember.forEach(function(r){(m.plan.remember||[]).forEach(function(o){if(lc(o.to||o.word)===lc(r.to))r.on=o.on;});});
   if(!plan.words.length&&!plan.speakers.length){
     m.status='cancelled';m.note='The note changed since this card was made, and nothing in it matches now.';
     saveSessions();renderDetail();return;
   }
   if(planKey(plan)!==planKey(m.plan)){
-    // the note changed since the card was made: show the new counts first, keep the remember choices
-    plan.remember.forEach(function(r){(m.plan.remember||[]).forEach(function(o){
-      if(o.word.toLowerCase()===r.word.toLowerCase())r.on=o.on;});});
+    // the note changed since the card was made: show the new counts first
     m.plan=plan;m.note='The note changed since this card was made, so these counts are new. Check them and tap Apply again.';
     saveSessions();renderDetail();return;
   }
-  plan.remember=m.plan.remember||plan.remember;
-  // one level of Undo: only the newest applied card keeps the note as it was
-  var snap={};
-  EDIT_KEYS.forEach(function(k){if(k in s)snap[k]=JSON.parse(JSON.stringify(s[k]));});
-  s.chat.forEach(function(x){if(x.role==='edit'&&x.snap)delete x.snap;});
-  if(plan.words.length){
-    var fx=wordFx(plan.words);
+  var rows=plan.words.filter(function(w){return w.on!==false;});
+  if(!rows.length&&!plan.speakers.length){flash('Tick at least one change, or tap Cancel.','warn');return;}
+  plan.remember=plan.remember.filter(function(r){return rows.some(function(w){return lc(w.to)===lc(r.to);});});
+  var snap=takeSnap(s);
+  if(rows.length){
+    var fx=wordFx(rows);
     s.segs.forEach(function(x){x.text=swapWords(x.text,fx);});
     if(s.summary)s.summary=mapText(s.summary,function(t){return swapWords(t,fx);});
     if(s.deep)s.deep=mapText(s.deep,function(t){return swapWords(t,fx);});
@@ -1935,24 +2547,268 @@ function applyEdit(ci){
   renderDetail();
 }
 function cancelEdit(ci){
-  var c=editCard(ci);if(!c||busy||c.m.status!=='pending')return;
+  var c=cardAt(ci);if(!c||busy)return;
+  if(c.m.role==='split'&&c.m.status!=='pending'&&c.m.status!=='ready')return;
+  if(c.m.role==='edit'&&c.m.status!=='pending')return;
   c.m.status='cancelled';delete c.m.note;saveSessions();renderDetail();
 }
 function undoEdit(ci){
-  var c=editCard(ci);if(!c||busy||c.m.status!=='applied'||!c.m.snap)return;
+  var c=cardAt(ci);if(!c||busy||c.m.status!=='applied'||!c.m.snap)return;
   var s=c.s,snap=c.m.snap;
   EDIT_KEYS.forEach(function(k){if(k in snap)s[k]=snap[k];else delete s[k];});
+  // the mini keeps its new split, so this note no longer matches the mini's speakers: naming stays in this note
+  if(c.m.role==='split')s.mismatch=true;
   delete c.m.snap;c.m.status='undone';
   saveSessions();renderDetail();
 }
-// After a join the old write-ups describe too many people: the same summary and insights calls, one after the other.
+// After a join or a split the old write-ups describe the wrong people: the same summary and insights calls again.
 function redoWriteups(ci){
-  var c=editCard(ci);if(!c||c.m.status!=='applied'||!guard('redo'))return;
+  var c=cardAt(ci);if(!c||c.m.status!=='applied'||!guard('redo'))return;
   var s=c.s,m=c.m;
   summaryFor(s).then(function(){return deepFor(s);}).then(function(){m.redone=true;saveSessions();}).catch(function(e){
     flash(e.message==='nokey'?'Add your Anthropic API key or Free AI link in Settings first.':e.message==='phonekey'?KEY_MSG:
       'The summary and insights did not come back. Try again.','warn');
   }).then(done);
+}
+
+/* ---------- head count: the mini listens again (door 2, ASK2 build C) ---------- */
+// Plaud notes the mini has only. Apply sends the job; the card polls every 20 s while the app is open and visible,
+// and once each time the note opens, for up to 30 minutes. The new speakers go on the note only after a second Apply.
+var SPLIT_EVERY=20000,SPLIT_MAX=30*60000,splitTimer=null,splitBusy=0;
+function addSplitCard(s,people){
+  if(s.chat.some(function(m){return m.role==='split'&&m.status==='working'&&Date.now()-(m.at||0)<SPLIT_MAX;})){
+    s.chat.push({role:'assistant',text:'The mini is already splitting this note. Check that card when it is done.'});return;
+  }
+  // about 4 seconds of mini time per audio minute (HEADCOUNT_RESULTS 10-14: 290 s for 79 minutes)
+  var mins=Math.max(1,Math.ceil((s.secs||0)/60*4/60));
+  s.chat.push({role:'split',people:people,mins:mins,status:'pending',made:Date.now()});
+}
+function splitSend(ci){
+  var c=cardAt(ci);if(!c||busy||c.m.role!=='split'||c.m.status!=='pending'||c.m.sending)return;
+  var s=c.s,m=c.m;
+  if(s.chat.some(function(x){return x!==m&&x.role==='split'&&x.status==='working'&&Date.now()-(x.at||0)<SPLIT_MAX;})){
+    m.err='The mini is already splitting this note. Wait for that card first.';saveSessions();renderDetail();return;
+  }
+  if(!nameUrl()||!phoneKey){m.err='Splitting needs the Plaud sync link and phone key in Settings.';saveSessions();renderDetail();return;}
+  m.sending=true;m.err='';renderDetail();
+  wordsCall({split:{note:miniId(s),people:m.people}},30000).then(function(d){
+    if(d&&d.ok&&(d.state==='queued'||d.state==='working')){
+      m.status='working';m.state=d.state;m.at=Date.now();m.miss=0;
+      // from now on the mini may change its speakers for this note: naming here stays in this note until Apply
+      m.mis0=!!s.mismatch;s.mismatch=true;
+    }else m.err=d&&d.error==='unknown note'?'The mini does not have this recording, so it cannot listen again.':
+      'The mini could not start the split'+(d&&d.error?' ('+String(d.error).slice(0,80)+')':'')+'.';
+  },function(e){
+    if(e&&e.message==='phonekey'){markKeyRefused();m.err=KEY_MSG;}
+    else m.err='Could not reach the mini, so the split did not start. Try again.';
+  }).then(function(){
+    delete m.sending;saveSessions();splitWatch();
+    if(activeId===s.id&&!$('viewDetail').classList.contains('hide')&&!busy)renderDetail();
+  });
+}
+function splitList(fresh){
+  var out=[];
+  sessions.forEach(function(s){(s.chat||[]).forEach(function(m){
+    if(m.role==='split'&&m.status==='working'&&(!fresh||Date.now()-(m.at||0)<SPLIT_MAX))out.push({s:s,m:m});});});
+  return out;
+}
+function splitWatch(){
+  var live=splitList(true).length>0;
+  if(live&&!splitTimer)splitTimer=setInterval(splitTick,SPLIT_EVERY);
+  if(!live&&splitTimer){clearInterval(splitTimer);splitTimer=null;}
+}
+function splitTick(){
+  if(document.visibilityState!=='visible'||splitBusy||updLeaving)return;
+  var list=splitList(true);
+  if(!list.length){splitWatch();refreshOpenView();return;}   // past 30 minutes: the card says so
+  if(!nameUrl()||keyProblem())return;
+  list.forEach(function(x){splitPoll(x.s,x.m);});
+}
+// Once when a note opens (also after 30 minutes).
+function splitOnOpen(s){
+  if(!s||!nameUrl()||keyProblem())return;
+  (s.chat||[]).forEach(function(m){if(m.role==='split'&&m.status==='working')splitPoll(s,m);});
+}
+function splitPoll(s,m){
+  splitBusy++;
+  return wordsCall({split:{note:miniId(s)}},20000).then(function(d){splitGot(s,m,d);},function(e){
+    if(e&&e.message==='phonekey')markKeyRefused();
+    m.miss=(m.miss||0)+1;
+  }).then(function(){
+    splitBusy--;saveSessions();splitWatch();
+    if(activeId===s.id&&!$('viewDetail').classList.contains('hide')&&!busy)renderDetail();
+  });
+}
+function splitFail(s,m,why,keep){
+  m.status='failed';m.why=why;
+  if(!keep&&'mis0' in m){if(m.mis0)s.mismatch=true;else delete s.mismatch;}
+}
+function splitGot(s,m,d){
+  if(m.status!=='working')return;
+  if(!d||d.ok!==true){
+    if(d&&d.error==='unknown note')return splitFail(s,m,'The mini does not have this recording.');
+    m.miss=(m.miss||0)+1;return;
+  }
+  m.miss=0;
+  if(d.state==='queued'||d.state==='working'){m.state=d.state;return;}
+  if(d.state==='none')return splitFail(s,m,'The mini has no split for this note now. It may have restarted. Try again.');
+  if(d.state==='failed')return splitFail(s,m,d.why?String(d.why).replace(/\s+/g,' ').slice(0,160):'The mini could not split it.');
+  if(d.state!=='done'){m.miss=1;return;}
+  // the mini's own copy now has the new speakers: naming here stays local until the phone takes them too
+  s.mismatch=true;
+  var r=splitResult(d.result);
+  if(!r)return splitFail(s,m,'The mini’s answer did not fit this note, so nothing changed.',true);
+  var map=splitMap(s,r);
+  if(!map)return splitFail(s,m,'This note’s lines no longer match the mini’s copy, so the new speakers can’t be put on it. Nothing changed.',true);
+  splitKeep(s,r,map);
+  m.result=r;m.status='ready';
+}
+// A name typed on this phone that the mini's voice match did not give back moves to the new speaker holding 60% or
+// more of that name's lines, when that speaker has no name yet and no other kept name took it.
+function splitKeep(s,r,map){
+  var L=noteLabels(s),kept=[],took={};
+  L.forEach(function(l,j){
+    if(GENERIC_RE.test(l)||r.names.some(function(n){return n.toLowerCase()===l.toLowerCase();}))return;
+    var cnt={},tot=0,best=-1,bn=0;
+    s.segs.forEach(function(x,i){if(x.sp===j){cnt[map[i]]=(cnt[map[i]]||0)+1;tot++;}});
+    Object.keys(cnt).forEach(function(k){if(cnt[k]>bn){bn=cnt[k];best=+k;}});
+    if(best<0||bn<tot*0.6||took[best]||!GENERIC_RE.test(r.names[best]))return;
+    took[best]=1;r.names[best]=l;kept.push(l);
+  });
+  r.kept=kept;
+}
+function splitResult(r){
+  if(!r||typeof r!=='object'||!Array.isArray(r.lines)||!Array.isArray(r.t)||!r.lines.length||r.lines.length!==r.t.length)return null;
+  var sp=r.lines.map(function(x){return Number(x);});
+  if(sp.some(function(x){return !(x===Math.floor(x)&&x>=0&&x<12);}))return null;
+  var k=Math.max.apply(null,sp)+1,names=[],share=[],i;
+  for(i=0;i<k;i++){
+    var nm=Array.isArray(r.names)&&typeof r.names[i]==='string'?r.names[i].replace(/\s+/g,' ').trim().slice(0,40):'';
+    names.push(nm&&!/^speaker\s*\d+$/i.test(nm)?nm:'Speaker '+(i+1));
+    var sh=Array.isArray(r.share)?Number(r.share[i]):NaN;
+    share.push(sh>=0&&sh<=1?sh:sp.filter(function(x){return x===i;}).length/sp.length);
+  }
+  var found=parseInt(r.found,10);
+  return {people:parseInt(r.people,10)||k,found:found>=1?Math.min(found,k):k,at:String(r.at||'').slice(0,40),
+    lines:sp,t:r.t.map(function(x){return Math.max(0,parseInt(x,10)||0);}),names:names,share:share};
+}
+// The mini's lines -> this phone's lines, in order, matched on each line's time. The phone dropped lines with no text
+// (addPlaudNote), so when the mini sent more lines, those are skipped; any other difference refuses (null).
+function splitMap(s,r){
+  var segs=s.segs,out=[],i,j=0;
+  if(r.lines.length===segs.length){
+    for(i=0;i<segs.length;i++){if(r.t[i]!==segs[i].t)return null;out.push(r.lines[i]);}
+    return out;
+  }
+  if(r.lines.length<segs.length)return null;
+  for(i=0;i<r.lines.length&&j<segs.length;i++)if(r.t[i]===segs[j].t){out.push(r.lines[i]);j++;}
+  return j===segs.length?out:null;
+}
+function splitApply(ci){
+  var c=cardAt(ci);if(!c||busy||c.m.role!=='split'||c.m.status!=='ready')return;
+  var s=c.s,m=c.m;
+  if(s.pendingAuto&&pendingBusy){flash('This note is still being written up. Tap Apply when that is done.','warn');return;}
+  var map=splitMap(s,m.result);
+  if(!map){splitFail(s,m,'This note’s lines no longer match the mini’s copy, so the new speakers can’t be put on it. Nothing changed.',true);
+    saveSessions();renderDetail();return;}
+  m.before=speakerCount(s);
+  var snap=takeSnap(s);
+  s.segs.forEach(function(x,i){x.sp=map[i];});
+  s.spkNames=m.result.names.slice();
+  s.joined=false;s.mismatch=false;s.resplit={at:m.result.at||new Date().toISOString(),people:m.people};
+  m.snap=snap;m.status='applied';
+  saveSessions();renderDetail();
+}
+function splitCardHtml(s,m,ci){
+  var at=' data-ci="'+ci+'"',dis=busy?' disabled':'',btns='',r=m.result,h='<div class="ecard"'+at+'>';
+  h+='<div class="ehead">'+(m.status==='pending'||m.status==='ready'?'Fix to check. Nothing changes until you tap Apply.':'Fix')+'</div>';
+  if(m.status==='pending'){
+    h+='<div class="eline">Listen again and split this note into '+m.people+' voices? The mini needs about '+nMins(m.mins)+'.</div>';
+    h+='<div class="esub">You see the new speakers before anything changes.</div>';
+    if(m.err)h+='<div class="eguess">'+esc(m.err)+'</div>';
+    btns='<button class="btn sm" data-act="apply"'+at+(dis||(m.sending?' disabled':''))+'>'+(m.sending?'<span class="spin"></span> Sending':'Apply')+'</button>'+
+      '<button class="btn sm ghost" data-act="cancel"'+at+(dis||(m.sending?' disabled':''))+'>Cancel</button>';
+  }
+  if(m.status==='working'){
+    var late=Date.now()-(m.at||0)>=SPLIT_MAX;
+    h+='<div class="eline">'+(late?'':'<span class="spin"></span> ')+'Working. The mini is listening again for '+m.people+' voices. It needs about '+nMins(m.mins)+'.</div>';
+    if(late)h+='<div class="eguess">The mini has not finished after 30 minutes. The app checks once more each time you open this note.</div>';
+    else{
+      if(m.state==='queued')h+='<div class="esub">Waiting for the mini to finish other work first.</div>';
+      if(m.miss)h+='<div class="esub">Could not reach the mini on the last check. The app keeps trying.</div>';
+    }
+    if(keyProblem())h+='<div class="esub">'+esc(KEY_MSG)+'</div>';
+  }
+  if(r&&(m.status==='ready'||m.status==='applied'||m.status==='undone'||m.status==='cancelled')){
+    h+='<div class="eline">'+r.names.length+(r.names.length===1?' voice: ':' voices: ')+esc(r.names.map(function(n,i){
+      return n+' '+Math.round((r.share[i]||0)*100)+'%';}).join(', '))+'</div>';
+    if(r.found<m.people)h+='<div class="esub">The mini only hears '+r.found+' different '+(r.found===1?'voice':'voices')+'.</div>';
+    if(r.kept&&r.kept.length)h+='<div class="esub">Names kept from this note: '+esc(joinAnd(r.kept))+'.</div>';
+  }
+  if(m.status==='ready'){
+    h+='<div class="esub">Apply puts these speakers on this note. A name shows only where the mini knows the voice.</div>';
+    btns='<button class="btn sm" data-act="apply"'+at+dis+'>Apply</button><button class="btn sm ghost" data-act="cancel"'+at+dis+'>Cancel</button>';
+  }
+  if(m.status==='failed')h+='<div class="estat">The split did not work. '+esc(m.why||'')+'</div>';
+  if(m.status==='cancelled')h+='<div class="estat">Cancelled. This note keeps its speakers.</div>';
+  if(m.status==='undone')h+='<div class="estat">Undone. The note is back the way it was before Apply.</div>';
+  if(m.status==='applied'){
+    h+='<div class="estat" style="color:var(--ok);font-weight:600">Applied to this note.</div>';
+    if(s.summary||s.deep){
+      if(m.redone)h+='<div class="esub">The summary and insights were redone after the split.</div>';
+      else{
+        h+='<div class="esub">The summary and insights were written for '+(m.before||'the old')+' speakers. Redo them to match.</div>';
+        btns+='<button class="btn sm" data-act="redo"'+at+dis+'>'+
+          ((busy&&busyWhat==='redo')?'<span class="spin"></span> Redoing':'Redo summary and insights')+'</button>';
+      }
+    }
+    if(m.snap)btns+='<button class="btn sm ghost" data-act="undo"'+at+dis+'>Undo</button>';
+  }
+  if(btns)h+='<div class="ebtns">'+btns+'</div>';
+  return h+'</div>';
+}
+function cardAct(ci,a){
+  var c=cardAt(ci);if(!c)return;
+  if(a==='apply')return c.m.role==='split'?(c.m.status==='ready'?splitApply(ci):splitSend(ci)):applyEdit(ci);
+  if(a==='cancel')return cancelEdit(ci);
+  if(a==='undo')return undoEdit(ci);
+  if(a==='redo')return redoWriteups(ci);
+}
+
+/* ---------- same name = same person (ASK2 build B) ---------- */
+// Joins go through the same card machinery (s.joined, no voice teaching, Undo on the Ask tab).
+var joinCtx=null;
+function dupGroups(s){
+  var L=noteLabels(s),g={},out=[];
+  L.forEach(function(l,i){if(GENERIC_RE.test(l))return;var k=l.trim().toLowerCase();(g[k]=g[k]||[]).push(i);});
+  Object.keys(g).forEach(function(k){if(g[k].length>1)out.push(g[k]);});
+  return out;
+}
+function openJoinSheet(s,joins,text){
+  joinCtx={id:s.id,joins:joins};
+  $('joinText').textContent=text;
+  $('joinYes').disabled=false;
+  $('joinSheet').classList.remove('hide');
+}
+function closeJoinSheet(){joinCtx=null;$('joinSheet').classList.add('hide');}
+function joinSame(){
+  var s=current();if(!s)return;
+  var gs=dupGroups(s),L=noteLabels(s),joins=[];
+  if(!gs.length)return;
+  gs.forEach(function(g){g.slice(1).forEach(function(i){joins.push({fi:i,ii:g[0]});});});
+  openJoinSheet(s,joins,gs.map(function(g){return g.length+' speakers are named '+L[g[0]]+'.';}).join(' ')+
+    (gs.length>1?' Join each name into one speaker?':' Are they the same person?'));
+}
+function joinYes(){
+  var ctx=joinCtx,s=current();
+  if(!ctx||!s||s.id!==ctx.id)return closeJoinSheet();
+  if(busy){flash('Wait for the app to finish, then try again.','warn');return;}
+  closeJoinSheet();
+  if(!addEditCard(s,{words:[],joins:ctx.joins,src:'name'}).card){flash('Nothing to join.','warn');return;}
+  applyEdit(s.chat.length-1);
+  var m=s.chat[s.chat.length-1];
+  if(m&&m.status==='applied')flash('Joined. To undo it, use the Undo button on the Ask tab.');
+  else{saveSessions();renderDetail();}
 }
 
 // Names the mini should spell right in future recordings: same rules as the mini (CONTRACT.md).
@@ -2016,29 +2872,42 @@ function memLines(m){
   return out;
 }
 function editCardHtml(s,m,ci){
-  var p=m.plan,at=' data-ci="'+ci+'"',dis=busy?' disabled':'',btns='',h='<div class="ecard"'+at+'>';
-  h+='<div class="ehead">'+(m.status==='pending'?'Fix to check. Nothing changes until you tap Apply.':'Fix')+'</div>';
+  var p=m.plan,at=' data-ci="'+ci+'"',dis=busy?' disabled':'',btns='',h='<div class="ecard"'+at+'>',pend=m.status==='pending';
+  h+='<div class="ehead">'+(pend?'Fix to check. Nothing changes until you tap Apply.':'Fix')+'</div>';
   if(p.say)h+='<div>'+esc(p.say)+'</div>';
+  function row(w,wi){
+    // card shows the spelling as it reads in the note now, and the spelling that goes in
+    var t=esc(w.seen||w.from)+' → '+esc(w.show||w.to)+', '+nPlaces(w.n),sub=[];
+    if(w.nP)sub.push(w.nP===w.n?'All of them are '+(w.seen||w.from)+'’s.':(w.nP===1?'1 of them is ':w.nP+' of them are ')+(w.seen||w.from)+'’s.');
+    if(w.nW)sub.push(w.nT+' in the transcript, '+w.nW+' in the summary and insights.');
+    if(w.found)sub.push('The app found this close spelling in the note.');
+    var x=pend?'<label class="erow"><input type="checkbox"'+at+' data-on="'+wi+'"'+(w.on!==false?' checked':'')+dis+'><span>'+t+'</span></label>':
+      '<div class="eline"'+(w.on===false?' style="text-decoration:line-through;color:var(--muted)"':'')+'>'+t+'</div>';
+    if(!pend&&w.on===false)sub=['Not changed.'];
+    return x+(sub.length?'<div class="esub">'+esc(sub.join(' '))+'</div>':'');
+  }
+  var shown={};
   (p.remember||[]).forEach(function(r,ri){
-    p.words.forEach(function(w){
-      if(w.to.toLowerCase()!==r.word.toLowerCase())return;
-      h+='<div class="eline">'+esc(w.from)+' → '+esc(w.to)+', '+nPlaces(w.n)+'</div>';
-      if(w.nW)h+='<div class="esub">'+w.nT+' in the transcript, '+w.nW+' in the summary and insights</div>';
+    p.words.forEach(function(w,wi){
+      if(w.to.toLowerCase()!==String(r.to||r.word).toLowerCase())return;
+      shown[wi]=1;h+=row(w,wi);
     });
-    if(m.status==='pending')h+='<label class="erem"><input type="checkbox"'+at+' data-rem="'+ri+'"'+(r.on?' checked':'')+dis+'>'+
+    if(pend)h+='<label class="erem"><input type="checkbox"'+at+' data-rem="'+ri+'"'+(r.on?' checked':'')+dis+'>'+
       '<span>Remember '+esc(r.word)+' for future recordings</span></label>';
   });
+  p.words.forEach(function(w,wi){if(!shown[wi])h+=row(w,wi);});
   if(p.speakers.length){
-    if(p.guessed)h+=m.status==='pending'?'<div class="eguess">These joins are a guess from the wording. Check them before you tap Apply.</div>':
+    if(p.guessed)h+=pend?'<div class="eguess">These joins are a guess from the wording. Check them before you tap Apply.</div>':
       '<div class="esub" style="margin-top:8px">These joins were a guess from the wording.</div>';
     p.speakers.forEach(function(j){h+='<div class="eline">'+esc(j.from)+' → '+esc(j.into)+', '+nLines(j.n)+'</div>';});
     h+='<div class="esub">This note goes from '+p.before+' speakers to '+p.after+'.'+
       (p.renamed.length?' Then '+esc(joinAnd(p.renamed.map(function(r){return r.from+' is called '+r.to;})))+'.':'')+'</div>';
     if(s.source==='Plaud')h+='<div class="esub">Joins change this note only. They never teach the mini’s voice memory.</div>';
   }
+  (p.notes||[]).forEach(function(t){h+='<div class="esub" style="margin-top:8px">'+esc(t)+'</div>';});
   if(p.left&&p.left.length)h+='<div class="esub" style="margin-top:8px">Left out: '+esc(p.left.join(' '))+'</div>';
   if(m.note)h+='<div class="eguess">'+esc(m.note)+'</div>';
-  if(m.status==='pending')btns='<button class="btn sm" data-act="apply"'+at+dis+'>Apply</button>'+
+  if(pend)btns='<button class="btn sm" data-act="apply"'+at+dis+'>Apply</button>'+
     '<button class="btn sm ghost" data-act="cancel"'+at+dis+'>Cancel</button>';
   if(m.status==='cancelled')h+='<div class="estat">Cancelled. Nothing changed.</div>';
   if(m.status==='undone'){
@@ -2346,7 +3215,7 @@ function updBusy(manual){
   if(keepAlive||rec||stream||mediaRec||updStopping)return true;                  // recording (this app has no pause)
   if(pending||pendingAudio||!$('viewSave').classList.contains('hide'))return true; // unsaved recording, Save screen
   if(uploading||pendingBusy||syncing||busy||namingN>0)return true;    // transcribing, write-ups, Plaud, AI, naming
-  if(!$('nameSheet').classList.contains('hide'))return true;
+  if(!$('nameSheet').classList.contains('hide')||!$('joinSheet').classList.contains('hide'))return true;
   var held=['impTitle','impText','qInput','phoneKey'];
   if(!manual)held.push('search');
   for(i=0;i<held.length;i++){f=$(held[i]);if(f&&String(f.value||'').trim())return true;}   // typed, not saved yet
@@ -2526,6 +3395,7 @@ function init(){
   document.addEventListener('visibilitychange',function(){
     if(document.visibilityState!=='visible'){hiddenAt=Date.now();return;}
     var away=hiddenAt?Date.now()-hiddenAt:0;hiddenAt=0;
+    if(away>=SPLIT_EVERY)setTimeout(splitTick,0);   // back after a while: check a running split now
     function syncRule(){if(syncUrl&&Date.now()-lastCheck>60000)syncPlaud(false);}
     // away a minute or more: look for a new version first, then the usual Plaud rule
     if(away>=60000&&Date.now()-updLast>=60000){checkForUpdate(function(leaving){if(!leaving)syncRule();});return;}
@@ -2561,6 +3431,10 @@ function init(){
   $('nameSave').onclick=function(){saveName(false);};
   $('nameClear').onclick=function(){saveName(true);};
   $('nameInput').onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();saveName(false);}};
+  $('joinYes').onclick=joinYes;
+  $('joinNo').onclick=closeJoinSheet;
+  $('joinSheet').onclick=function(e){if(e.target===$('joinSheet'))closeJoinSheet();};
+  splitWatch();
 
   $('apiKey').oninput=function(){apiKey=$('apiKey').value.trim();try{localStorage.setItem(KEY_API,apiKey);}catch(e){}setImpMode(impMode);};
   $('model').onchange=function(){prefs.model=$('model').value;savePrefs();};
