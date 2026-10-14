@@ -223,7 +223,9 @@
     <div id="dMeta" style="font-size:12.5px;color:var(--muted);margin:6px 0 18px;display:flex;gap:12px;flex-wrap:wrap"></div>
     <div id="dActions" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:18px">
       <button class="btn sm ghost" id="copyBtn">Copy as Markdown</button>
+      <button class="btn sm ghost" id="mailBtn">Email</button>
       <button class="btn sm ghost" id="delBtn" style="margin-left:auto;color:var(--rec);border-color:#E3C4C0">Delete</button>
+      <div id="mailHint" class="hide" style="flex-basis:100%;font-size:12.5px;color:var(--muted);line-height:1.45"></div>
     </div>
     <div class="row" id="dTabs" style="margin-bottom:18px"></div>
     <div id="dBody"></div>
@@ -369,7 +371,7 @@
 "use strict";
 
 // The build of this page. Change it on EVERY change to this file (YYYY-MM-DD.N): phones update only to a new one.
-var APP_BUILD='2026-10-06.1';
+var APP_BUILD='2026-10-13.1';
 
 var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
 var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince', KEY_AI='ont.aiurl';
@@ -1363,6 +1365,7 @@ function renderDetail(){
   }
 
   $('dBody').innerHTML=h;
+  showMailHint(s);
 
   Array.prototype.forEach.call(document.querySelectorAll('#dBody [data-sp]'),function(b){
     b.onclick=function(){openNameSheet(parseInt(b.getAttribute('data-sp'),10));};
@@ -1730,6 +1733,151 @@ function copyText(t){
   }
 }
 
+/* ---------- email: summary in the body, PDFs attached ---------- */
+// The phone's share menu does the sending (Cory picks Mail). Nothing is sent from a server.
+var PDF_SRC='https://cdnjs.cloudflare.com/ajax/libs/jspdf/3.0.3/jspdf.umd.min.js',
+    PDF_SRI='sha512-+EeCylkt9WHJk5tGJxYdecHOcXFRME7qnbsfeMsdQL6NUPYm2+uGFmyleEqsmVoap/f3dN/sc3BX9t9kHXkHHg==';
+var pdfLib=null,pdfLoading=null;
+// Loaded when a note opens: the share menu has to open inside the tap, so nothing slow can run then.
+function loadPdfLib(){
+  if(pdfLib)return Promise.resolve(pdfLib);
+  if(pdfLoading)return pdfLoading;
+  pdfLoading=new Promise(function(res,rej){
+    var sc=document.createElement('script');
+    sc.src=PDF_SRC;sc.integrity=PDF_SRI;sc.crossOrigin='anonymous';sc.referrerPolicy='no-referrer';
+    function fail(){pdfLoading=null;if(sc.parentNode)sc.parentNode.removeChild(sc);rej(new Error('pdflib'));}
+    sc.onload=function(){if(window.jspdf&&window.jspdf.jsPDF){pdfLib=window.jspdf.jsPDF;res(pdfLib);}else fail();};
+    sc.onerror=fail;
+    document.head.appendChild(sc);
+  });
+  return pdfLoading;
+}
+function mailParts(s){
+  var d=s.deep;
+  return [
+    {key:'transcript',name:'Transcript',has:s.segs.length>0,why:'no transcript'},
+    {key:'insights',name:'Insights',has:!!(d&&((d.insights&&d.insights.length)||(d.tensions&&d.tensions.length)||
+      (d.gaps&&d.gaps.length)||(d.speakers&&d.speakers.length)||(d.questions&&d.questions.length))),why:'not run yet'},
+    {key:'marks',name:'Highlights',has:s.segs.some(function(x){return x.mk;}),why:'nothing highlighted'}
+  ];
+}
+function showMailHint(s){
+  var t='';
+  if(!s.summary)t='Email puts the summary in the body, so make the summary first.';
+  else{
+    var off=mailParts(s).filter(function(p){return !p.has;});
+    if(off.length)t='Email leaves off '+off.map(function(p){return p.name+' ('+p.why+')';}).join(' and ')+'.';
+  }
+  $('mailHint').textContent=t;$('mailHint').classList.toggle('hide',!t);
+  loadPdfLib().catch(function(){});
+}
+function mailBody(s){
+  var sm=s.summary,out=s.title+'\n'+fmtDate(s.created)+' — '+fmt(s.secs)+'\n\n';
+  function list(t,a){if(a&&a.length)out+=t+'\n'+a.map(function(p){return '- '+p;}).join('\n')+'\n\n';}
+  if(sm.headline)out+=sm.headline+'\n\n';
+  if(sm.tldr)out+=sm.tldr+'\n\n';
+  list('Key points',sm.keyPoints);
+  list('Decisions',sm.decisions);
+  if(sm.actionItems&&sm.actionItems.length)out+='To do\n'+sm.actionItems.map(function(a){
+    return '- '+(a.task||'')+' ('+(a.owner||'Unassigned')+')';}).join('\n')+'\n\n';
+  list('Still open',sm.openQuestions);
+  return out.replace(/\s+$/,'')+'\n';
+}
+// The built-in PDF fonts only know Western letters: curly quotes and dashes become plain ones, emoji drop out.
+function pdfSafe(t){
+  return String(t==null?'':t).replace(/[‘’‚′]/g,"'").replace(/[“”„″]/g,'"')
+    .replace(/[–—−]/g,'-').replace(/…/g,'...').replace(/[   ]/g,' ')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E¡-ÿ]/g,'');
+}
+function notePdf(s,p){
+  var doc=new pdfLib({unit:'pt',format:'letter'});
+  var W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=54,y=M,TS=46;
+  function room(h){if(y+h>H-M){doc.addPage();y=M;}}
+  function font(size,bold,color){doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(size);doc.setTextColor(color||'#1E211D');}
+  // one block of wrapped text; o.left = text starts this far in, o.lead = a timestamp or bullet before line one
+  function para(t,o){
+    o=o||{};var size=o.size||10.5,lh=size*1.42,x=M+(o.left||0);
+    font(size,o.bold,o.color);
+    var lines=doc.splitTextToSize(pdfSafe(t),W-M-x);
+    lines.forEach(function(line,i){
+      room(lh);
+      if(i===0&&o.lead==='dot'){doc.setFillColor('#1E211D');doc.circle(x-8,y+size*0.62,1.6,'F');}
+      else if(i===0&&o.lead){font(size-1,false,'#8A8F86');doc.text(pdfSafe(o.lead),M,y+size);font(size,o.bold,o.color);}
+      doc.text(line,x,y+size);y+=lh;
+    });
+    y+=o.gap||0;
+  }
+  function head(t){y+=8;room(40);para(t,{size:12.5,bold:true,gap:3});}
+  function bullets(t,a){if(a&&a.length){head(t);a.forEach(function(x){para(x,{left:12,lead:'dot',gap:3});});}}
+  function who(x){return speakerCount(s)>1?spkLabel(s,x.sp)+': ':'';}
+
+  para(s.title,{size:16,bold:true,gap:2});
+  para(fmtDate(s.created)+'  |  '+fmt(s.secs)+'  |  '+p.name,{size:9.5,color:'#8A8F86',gap:12});
+  if(p.key==='transcript'){
+    s.segs.forEach(function(x){para(who(x)+x.text+(x.mk?'  [highlighted]':''),{left:TS,lead:fmt(x.t),gap:3});});
+  }
+  if(p.key==='marks'){
+    s.segs.filter(function(x){return x.mk;}).forEach(function(x){para(who(x)+x.text,{left:TS,lead:fmt(x.t),gap:5});});
+  }
+  if(p.key==='insights'){
+    var d=s.deep;
+    if(d.insights&&d.insights.length){
+      head('What stands out');
+      d.insights.forEach(function(i){para(i.title||'',{bold:true,gap:1});para(i.detail||'',{gap:7});});
+    }
+    bullets('Where people did not line up',d.tensions);
+    bullets('What never got covered',d.gaps);
+    if(d.speakers&&d.speakers.length){
+      head('People');
+      d.speakers.forEach(function(x,i){
+        para(x.name||('Speaker '+(i+1)),{bold:true,gap:2});
+        [['What they were after',x.wanted],['Where they stood',x.position],['What they committed to',x.committed],
+         ['How they came across',x.tone]].forEach(function(r){if(r[1])para(r[0]+': '+r[1],{left:12,gap:2});});
+        y+=6;
+      });
+    }
+    bullets('Questions worth asking',d.questions);
+  }
+  var n=doc.getNumberOfPages();
+  for(var i=1;i<=n;i++){
+    doc.setPage(i);font(8.5,false,'#8A8F86');
+    doc.text(doc.splitTextToSize(pdfSafe(s.title),W-2*M-80)[0]||'',M,H-30);
+    doc.text('Page '+i+' of '+n,W-M,H-30,{align:'right'});
+  }
+  return doc;
+}
+function mailNote(){
+  var s=current();if(!s)return;
+  if(!s.summary){flash('Make the summary first. It goes in the body of the email.','warn');dTab='summary';renderDetail();return;}
+  if(!pdfLib){
+    flash('Getting the PDF maker ready. Tap Email again in a moment.','warn');
+    loadPdfLib().catch(function(){flash('Could not load the PDF maker. Check your connection and try again.','warn');});
+    return;
+  }
+  var base=String(s.title||'').replace(/[\\\/:*?"<>|\u0000-\u001F]+/g,' ').replace(/\s+/g,' ').trim().slice(0,60)||'Note';
+  var files=[],body=mailBody(s);
+  try{
+    mailParts(s).forEach(function(p){
+      if(p.has)files.push(new File([notePdf(s,p).output('blob')],base+' - '+p.name+'.pdf',{type:'application/pdf'}));
+    });
+  }catch(e){flash('Could not make the PDFs. Try again.','warn');return;}
+  if(navigator.share&&navigator.canShare&&navigator.canShare({files:files})){
+    navigator.share({title:s.title,text:body,files:files}).catch(function(e){
+      if(e&&e.name==='AbortError')return;   // closed the share menu
+      flash('The share menu did not open. Try again.','warn');
+    });
+    return;
+  }
+  // No file sharing here (most computers): save the PDFs and copy the summary instead.
+  files.forEach(function(f){
+    var a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;
+    document.body.appendChild(a);a.click();
+    setTimeout(function(){URL.revokeObjectURL(a.href);if(a.parentNode)a.parentNode.removeChild(a);},4000);
+  });
+  copyText(body);
+  flash('This browser can’t attach files to an email, so the PDFs were saved and the summary is copied. Paste it into an email and attach them.','warn');
+}
+
 /* ---------- views ---------- */
 function show(v){
   ['viewRecord','viewImport','viewSave','viewLib','viewDetail'].forEach(function(id){$(id).classList.add('hide');});
@@ -1964,6 +2112,7 @@ function init(){
   $('search').oninput=renderLib;
 
   $('copyBtn').onclick=function(){var s=current();if(s)copyText(markdown(s));};
+  $('mailBtn').onclick=mailNote;
   $('delBtn').onclick=function(){
     var s=current();if(!s)return;
     if(!confirm('Delete "'+s.title+'"? This cannot be undone.'))return;
