@@ -121,6 +121,21 @@
   .prog{height:8px;background:var(--paper-2);border-radius:25px;overflow:hidden;margin:12px 0 8px}
   .prog i{display:block;height:100%;width:0;background:var(--ink);border-radius:25px;transition:width .25s}
   .hintp{font-size:12.5px;color:var(--muted);line-height:1.55;margin:8px 0 0}
+  .ecard{border:1px solid var(--rule);background:#FAFBF7;border-radius:25px;padding:15px 19px;margin:0 20px 9px 0;
+    font-size:15px;line-height:1.5;overflow-wrap:anywhere}
+  .ecard .ehead{font-size:12.5px;font-weight:600;color:var(--muted);margin:0 0 6px}
+  .ecard .eline{margin:8px 0 0;font-weight:500}
+  .ecard .esub{font-size:12.5px;color:var(--muted);line-height:1.5;margin-top:3px}
+  .ecard .erem{display:flex;align-items:flex-start;gap:9px;font-size:13.5px;line-height:1.45;margin:7px 0 0;cursor:pointer}
+  .ecard .erem input{width:17px;height:17px;flex:none;margin:1px 0 0;accent-color:#171A16}
+  .ecard .eguess{border:1px solid #C9A227;background:#FBF5E0;border-radius:18px;padding:8px 13px;font-size:13px;line-height:1.45;margin:9px 0 0}
+  .ecard .ebtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .ecard .estat{font-size:13.5px;margin-top:10px}
+  .wchip{display:inline-flex;align-items:center;gap:2px;max-width:100%;border:1px solid var(--rule);background:#fff;
+    border-radius:25px;padding:3px 3px 3px 14px;font-size:13.5px}
+  .wchip span{overflow-wrap:anywhere;min-width:0}
+  .wchip button{width:30px;height:30px;border-radius:50%;flex:none;color:var(--muted);font-size:17px;line-height:1}
+  .wchip button:disabled{opacity:.4;cursor:default}
 </style>
 </head>
 <body>
@@ -316,6 +331,15 @@
       Lets this phone use your Plaud sync, Free AI and naming links. It is 28 letters and numbers. Spaces and dashes don’t matter.
     </p>
 
+    <div id="wordsBlock" style="margin:0 0 20px">
+      <span class="lbl">Names the mini knows</span>
+      <div class="row" id="wordsList"></div>
+      <p class="hintp" id="wordsMsg" style="margin:6px 0 0"></p>
+      <p style="font-size:12.5px;color:var(--muted);margin:7px 0 0;line-height:1.5">
+        The mini uses these spellings in future recordings. Add one by fixing a name in Ask. Tap × to remove one.
+      </p>
+    </div>
+
     <label class="lbl" for="model">Model</label>
     <select class="fld" id="model" style="margin-bottom:20px">
       <option value="claude-sonnet-5">Sonnet 5 — best balance</option>
@@ -371,7 +395,7 @@
 "use strict";
 
 // The build of this page. Change it on EVERY change to this file (YYYY-MM-DD.N): phones update only to a new one.
-var APP_BUILD='2026-10-13.1';
+var APP_BUILD='2026-10-13.2';
 
 var KEY_SESSIONS='ont.sessions', KEY_API='ont.key', KEY_PREFS='ont.prefs', KEY_DRAFT='ont.draft';
 var KEY_DG='ont.dgkey', KEY_OA='ont.oakey', KEY_SYNC='ont.syncurl', KEY_SINCE='ont.plaudSince', KEY_AI='ont.aiurl';
@@ -1007,6 +1031,7 @@ function savePhoneKey(){
   $('phoneKey').value='';
   renderPhoneKey();renderSyncBar();
   if(!$('viewDetail').classList.contains('hide')&&!busy)renderDetail();
+  if(!$('sheet').classList.contains('hide'))loadWords();
   if(syncUrl)syncPlaud(true);
 }
 
@@ -1354,11 +1379,15 @@ function renderDetail(){
 
   if(dTab==='ask'){
     h='<div id="chatBox">';
-    if(!s.chat.length)h+='<div class="empty" style="padding:26px 10px">Ask anything about this recording.<br>&quot;What did we agree on the price?&quot;</div>';
-    s.chat.forEach(function(m){h+='<div class="qa '+(m.role==='user'?'me':'ai')+'">'+esc(m.text)+'</div>';});
+    if(!s.chat.length)h+='<div class="empty" style="padding:26px 10px">Ask anything about this recording.<br>&quot;What did we agree on the price?&quot;'+
+      '<br><br>Or fix it: &quot;It&#39;s Birdy, not Bernie.&quot;</div>';
+    s.chat.forEach(function(m,ci){
+      if(m.role==='edit'){h+=editCardHtml(s,m,ci);return;}
+      h+='<div class="qa '+(m.role==='user'?'me':'ai')+'">'+esc(m.text)+'</div>';
+    });
     if(busy&&busyWhat==='ask')h+='<div style="font-size:13px;color:var(--muted);padding:4px 2px"><span class="spin"></span> Reading the transcript</div>';
     h+='</div><div style="display:flex;gap:8px;margin-top:12px">'+
-      '<input class="fld" id="qInput" placeholder="Ask a question" style="flex:1">'+
+      '<input class="fld" id="qInput" placeholder="Ask, or fix a word" style="flex:1;min-width:0">'+
       '<button class="btn" id="askBtn"'+(busy?' disabled':'')+'>Ask</button></div>'+
       ((apiKey||aiUrl)?'':'<p style="font-size:12.5px;color:var(--muted);margin-top:10px">Add your Anthropic API key or Free AI link in Settings to use this.</p>')+
       ((aiUrl&&keyProblem())?'<p id="askKeyMsg" style="font-size:12.5px;color:var(--muted);margin-top:10px">'+esc(KEY_MSG)+'</p>':'');
@@ -1378,6 +1407,20 @@ function renderDetail(){
     $('askBtn').onclick=function(){askQuestion($('qInput').value);};
     $('qInput').onkeydown=function(e){if(e.key==='Enter')askQuestion($('qInput').value);};
   }
+  Array.prototype.forEach.call(document.querySelectorAll('#dBody [data-act]'),function(b){
+    b.onclick=function(){
+      var ci=parseInt(b.getAttribute('data-ci'),10),a=b.getAttribute('data-act');
+      if(a==='apply')applyEdit(ci);else if(a==='cancel')cancelEdit(ci);
+      else if(a==='undo')undoEdit(ci);else if(a==='redo')redoWriteups(ci);
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('#dBody [data-rem]'),function(c){
+    c.onchange=function(){
+      var cur=current(),m=cur&&cur.chat[parseInt(c.getAttribute('data-ci'),10)];
+      var r=m&&m.role==='edit'&&m.status==='pending'&&m.plan.remember[parseInt(c.getAttribute('data-rem'),10)];
+      if(r){r.on=!!c.checked;saveSessions();}
+    };
+  });
   Array.prototype.forEach.call(document.querySelectorAll('.askq'),function(b){
     b.onclick=function(){
       var cur=current();
@@ -1463,10 +1506,11 @@ function openNameSheet(sp){
   $('nameTitle').textContent=generic?'Who is '+lab+'?':'Rename '+lab;
   $('nameInput').value=generic?'':lab;
   $('nameClear').classList.toggle('hide',generic);
-  $('nameHint').textContent=s.source==='Plaud'?
-    'Saving teaches the mini this voice. Later recordings show a name only when the voice clearly matches. Otherwise they say Speaker 1, 2, 3.':
-    'This changes the name in this note only. Voice learning works on Plaud recordings.';
-  showNameMsg(s.source==='Plaud'&&keyProblem()?KEY_MSG:'');setNameBusy(false);
+  $('nameHint').textContent=s.source!=='Plaud'?
+    'This changes the name in this note only. Voice learning works on Plaud recordings.':
+    s.joined?'Speakers in this note were joined, so this changes the name in this note only. The mini does not learn this voice.':
+    'Saving teaches the mini this voice. Later recordings show a name only when the voice clearly matches. Otherwise they say Speaker 1, 2, 3.';
+  showNameMsg(s.source==='Plaud'&&!s.joined&&keyProblem()?KEY_MSG:'');setNameBusy(false);
   $('nameSheet').classList.remove('hide');
   setTimeout(function(){try{$('nameInput').focus();}catch(e){}},60);
 }
@@ -1486,7 +1530,8 @@ function saveName(clear){
   if(/^speaker\s*\d+$/i.test(nm))nm='';
   if(!clear&&!nm){showNameMsg('Type a name first, or tap Cancel.');return;}
   var label=nm||('Speaker '+(ctx.sp+1));
-  if(s.source!=='Plaud'){
+  // A note with joined speakers no longer matches the mini's speaker numbers: name it here only, never teach a voice.
+  if(s.source!=='Plaud'||s.joined){
     applyLabel(s,ctx.sp,label);closeNameSheet();renderDetail();
     flash(nm?'Named '+nm+' in this note.':'Back to Speaker '+(ctx.sp+1)+'.');
     return;
@@ -1673,17 +1718,399 @@ function askQuestion(text){
   s.chat.push({role:'user',text:q});saveSessions();
   busy=true;busyWhat='ask';renderDetail();
 
-  var prior=s.chat.slice(0,-1).map(function(m){return (m.role==='user'?'Q: ':'A: ')+m.text;}).join('\n');
+  var prior=s.chat.slice(0,-1).map(chatLine).join('\n');
   var prompt='Answer questions about this recorded conversation. Use only what is in the transcript. If the answer is not there, say so plainly. If you are reading between the lines, say that too. Keep answers short and simple. '+
     'Refer to speakers only by their labels in the transcript; never guess who a labeled speaker really is.\n\n'+
+    editRule(noteLabels(s))+'\n\n'+
     'TRANSCRIPT:\n'+transcriptText(s).slice(0,80000)+'\n\n'+
     (prior?'EARLIER IN THIS CHAT:\n'+prior+'\n\n':'')+'QUESTION: '+q;
 
   callClaude(prompt,1200).then(function(ans){
-    s.chat.push({role:'assistant',text:ans.trim()});saveSessions();
+    // a fix comes back as {"edit":true,...}: show a card, change nothing yet; anything else is a normal answer
+    var j=null;try{j=parseJSON(ans);}catch(e){}
+    if(j&&typeof j==='object'&&!Array.isArray(j)&&j.edit===true)addEditCard(s,j);
+    else s.chat.push({role:'assistant',text:ans.trim()});
+    saveSessions();
   }).catch(function(e){
     s.chat.push({role:'assistant',text:(e&&e.message==='phonekey')?KEY_MSG:'That did not go through. Check Settings and ask again.'});saveSessions();
   }).then(done);
+}
+
+/* ---------- fixes typed in Ask: word fixes and speaker joins (Cory 2026-10-13) ---------- */
+// Nothing changes until Apply. The app counts every match itself and never uses counts from the AI. Joins change one
+// note only and never teach the mini's voice memory (s.joined keeps naming inside the note). One level of Undo.
+var EDIT_KEYS=['segs','spkNames','summary','deep','joined'],GENERIC_RE=/^speaker\s*\d+$/i;
+function editRule(labels){
+  return 'If the message asks to fix or correct the transcript (a misheard word or name, or who spoke, or how many people talked), do not answer it. '+
+    'Reply with ONLY a JSON object instead, no code fences and no other text, shaped exactly like this:\n'+
+    '{"edit":true,"words":[{"from":"wrong spelling","to":"right spelling"}],"speakers":[{"from":"extra speaker label","into":"real speaker label"}],"guessed":false,"say":"one short plain sentence"}\n'+
+    'In "words", "from" is a wrong spelling exactly as it appears in the transcript and "to" is the right one. List every wrong spelling of that word or name you can see in the transcript, each as its own entry (for example both "Bernie" and "Birdie" when the right name is "Birdy"). '+
+    'In "speakers", "from" is an extra speaker that goes away and "into" is the real speaker whose lines it joins. Use only these speaker labels, exactly as written: '+labels.join(', ')+'. '+
+    'If the message only says how many people talked, pick the joins yourself from the wording and set "guessed" to true. '+
+    'Use an empty array for a part with nothing in it. Put no counts in "say". '+
+    'If the message is a question and not a fix, ignore this paragraph and answer normally.';
+}
+function editList(p){
+  return (p.words||[]).map(function(w){return w.from+' -> '+w.to;})
+    .concat((p.speakers||[]).map(function(j){return j.from+' into '+j.into;})).join('; ');
+}
+function chatLine(m){
+  if(m.role==='edit')return 'A: (a fix card, '+(m.status||'pending')+': '+editList(m.plan||{})+')';
+  return (m.role==='user'?'Q: ':'A: ')+m.text;
+}
+function quo(t){return '“'+t+'”';}
+function nPlaces(n){return n===1?'1 place':n+' places';}
+function nLines(n){return n===1?'1 line':n+' lines';}
+function joinAnd(a){return a.length<2?(a[0]||''):a.slice(0,-1).join(', ')+' and '+a[a.length-1];}
+
+// Only the shape the app asked for survives; everything else from the AI is ignored.
+function editReq(j){
+  function str(v,max){return typeof v==='string'?v.replace(/\s+/g,' ').trim().slice(0,max||80):'';}
+  function list(a,k1,k2){
+    var out=[];
+    (Array.isArray(a)?a:[]).forEach(function(x){if(x&&typeof x==='object'&&out.length<20)out.push([str(x[k1]),str(x[k2])]);});
+    return out;
+  }
+  return {words:list(j.words,'from','to').map(function(p){return {from:p[0],to:p[1]};}),
+    speakers:list(j.speakers,'from','into').map(function(p){return {from:p[0],into:p[1]};}),
+    guessed:j.guessed===true,say:str(j.say,300)};
+}
+// Every string in a summary or insights object, rebuilt through fn (the "kind" tag is not text).
+function mapText(v,fn,key){
+  if(typeof v==='string')return key==='kind'?v:fn(v);
+  if(Array.isArray(v))return v.map(function(x){return mapText(x,fn);});
+  if(v&&typeof v==='object'){
+    var o={};for(var k in v)if(Object.prototype.hasOwnProperty.call(v,k))o[k]=mapText(v[k],fn,k);
+    return o;
+  }
+  return v;
+}
+// All word fixes in one pass, longest first, whole words, any case: one fix never rewrites another's result.
+function wordFx(list){
+  var by=list.slice().sort(function(a,b){return b.from.length-a.from.length;});
+  return {list:by.map(function(w){return {w:w,re:new RegExp('^'+reEsc(w.from)+'$','iu')};}),
+    re:new RegExp('(^|[^\\p{L}\\p{N}_])('+by.map(function(w){return reEsc(w.from);}).join('|')+')(?![\\p{L}\\p{N}_])','giu')};
+}
+// tally(w) runs once per real change; a spot already spelled exactly right is not a change.
+function swapWords(t,fx,tally){
+  return t.replace(fx.re,function(m,pre,word){
+    for(var i=0;i<fx.list.length;i++)if(fx.list[i].re.test(word)){
+      if(word===fx.list[i].w.to)return m;
+      if(tally)tally(fx.list[i].w);
+      return pre+fx.list[i].w.to;
+    }
+    return m;
+  });
+}
+// Speakers after the joins: a joined speaker takes the place of the one it joins, the rest close up in order.
+// Named labels keep their names; "Speaker N" labels take their new number.
+function joinMap(labels,joins){
+  var gone={},pos=[],out=[],to=[],k=0,i;
+  joins.forEach(function(j){gone[j.fi]=j.ii;});
+  for(i=0;i<labels.length;i++)if(!(i in gone))pos[i]=k++;
+  for(i=0;i<labels.length;i++)if(i in gone)pos[i]=pos[gone[i]];
+  for(i=0;i<labels.length;i++)if(!(i in gone))out[pos[i]]=GENERIC_RE.test(labels[i])?'Speaker '+(pos[i]+1):labels[i];
+  for(i=0;i<labels.length;i++)to[i]=out[pos[i]];
+  return {gone:gone,pos:pos,newLabels:out,to:to};
+}
+// Old label -> new label in write-up text, through placeholder tokens, so "Speaker 3" -> "Speaker 2" never runs
+// into the old "Speaker 2". Longest labels first, whole words only.
+function relabel(v,pairs){
+  if(v==null||!pairs.length)return v;
+  function tok(i){return ''+String.fromCharCode(0xE100+i)+'';}
+  var order=pairs.map(function(p,i){return i;}).sort(function(a,b){return pairs[b].from.length-pairs[a].from.length;});
+  return mapText(v,function(t){
+    order.forEach(function(i){t=t.replace(wordRe(pairs[i].from,'giu'),function(m,pre){return pre+tok(i);});});
+    pairs.forEach(function(p,i){t=t.split(tok(i)).join(p.to);});
+    return t;
+  });
+}
+// What a fix would change in this note right now, counted by the app. Anything that does not fit is left out and said.
+function editPlan(s,req){
+  var labels=noteLabels(s),plan={words:[],remember:[],speakers:[],left:[],guessed:!!req.guessed,say:req.say||''};
+  function lc(t){return String(t).toLowerCase();}
+  // a word that is (part of) a speaker label is renamed on the Transcript tab, never by a word fix
+  function inLabel(t){return GENERIC_RE.test(t)||labels.some(function(l){return lc(l)===lc(t)||wordRe(t).test(l);});}
+  var cand=[],seen={};
+  req.words.forEach(function(w){
+    var f=w.from,t=w.to;
+    if(!f||!t||f===t||seen[lc(f)])return;
+    if(inLabel(f)||GENERIC_RE.test(t)){plan.left.push(quo(f)+' is a speaker name. To name a speaker, tap them on the Transcript tab.');return;}
+    if(req.words.some(function(x){return x.to&&lc(x.to)===lc(f)&&lc(x.to)!==lc(t);})){
+      plan.left.push(quo(f)+' is also the fix for another word.');return;}
+    seen[lc(f)]=1;cand.push({from:f,to:t,n:0,nT:0,nW:0});
+  });
+  if(cand.length){
+    var fx=wordFx(cand);
+    s.segs.forEach(function(x){swapWords(x.text,fx,function(w){w.nT++;});});
+    [s.summary,s.deep].forEach(function(v){if(v)mapText(v,function(t){return swapWords(t,fx,function(w){w.nW++;});});});
+    cand.forEach(function(w){
+      w.n=w.nT+w.nW;
+      if(!w.n){plan.left.push(quo(w.from)+' is not in this note.');return;}
+      plan.words.push(w);
+      if(!plan.remember.some(function(r){return lc(r.word)===lc(w.to);}))plan.remember.push({word:w.to,on:true});
+    });
+  }
+  function idx(t){
+    var hit=[];labels.forEach(function(l,i){if(lc(l)===lc(t))hit.push(i);});
+    return hit.length===1?hit[0]:hit.length?-2:-1;
+  }
+  var joins=[];
+  req.speakers.forEach(function(p){
+    var fi=idx(p.from),ii=idx(p.into),bad=fi<0?p.from:p.into,why=fi<0?fi:ii;
+    if(fi<0||ii<0){plan.left.push(!bad?'A join was missing a speaker.':why===-2?
+      quo(bad)+' is the name of more than one speaker.':quo(bad)+' is not a speaker in this note.');return;}
+    if(fi===ii)return;
+    if(joins.some(function(j){return j.fi===fi;})){plan.left.push(quo(p.from)+' can join only one speaker.');return;}
+    joins.push({from:labels[fi],into:labels[ii],fi:fi,ii:ii,n:0});
+  });
+  joins.forEach(function(j){
+    // a chain (a speaker that goes away and also takes another in) is left out: the card shows plain joins only
+    if(joins.some(function(k){return k!==j&&(k.fi===j.ii||k.ii===j.fi);})){
+      plan.left.push(quo(j.from)+' → '+quo(j.into)+' chains with another join.');return;}
+    j.n=s.segs.filter(function(x){return x.sp===j.fi;}).length;
+    plan.speakers.push(j);
+  });
+  if(plan.speakers.length){
+    var jm=joinMap(labels,plan.speakers);
+    plan.before=labels.length;plan.after=jm.newLabels.length;plan.renamed=[];
+    labels.forEach(function(l,i){if(!(i in jm.gone)&&jm.to[i]!==l)plan.renamed.push({from:l,to:jm.to[i]});});
+  }
+  return plan;
+}
+function planKey(p){
+  return JSON.stringify([p.words.map(function(w){return [w.from,w.to,w.n,w.nT,w.nW];}),
+    p.speakers.map(function(j){return [j.from,j.into,j.fi,j.ii,j.n];})]);
+}
+function addEditCard(s,j){
+  var req=editReq(j),plan=editPlan(s,req);
+  if(!plan.words.length&&!plan.speakers.length){
+    s.chat.push({role:'assistant',text:'Nothing in this note matched that fix, so nothing changed.'+
+      (plan.left.length?'\n'+plan.left.join('\n'):'')});
+    return;
+  }
+  s.chat.push({role:'edit',req:req,plan:plan,status:'pending',made:Date.now()});
+}
+function editCard(ci){var s=current(),m=s&&s.chat[ci];return (m&&m.role==='edit')?{s:s,m:m}:null;}
+
+function applyEdit(ci){
+  var c=editCard(ci);if(!c||busy||c.m.status!=='pending')return;
+  var s=c.s,m=c.m;
+  if(s.pendingAuto&&pendingBusy){flash('This note is still being written up. Tap Apply when that is done.','warn');return;}
+  var plan=editPlan(s,m.req);
+  if(!plan.words.length&&!plan.speakers.length){
+    m.status='cancelled';m.note='The note changed since this card was made, and nothing in it matches now.';
+    saveSessions();renderDetail();return;
+  }
+  if(planKey(plan)!==planKey(m.plan)){
+    // the note changed since the card was made: show the new counts first, keep the remember choices
+    plan.remember.forEach(function(r){(m.plan.remember||[]).forEach(function(o){
+      if(o.word.toLowerCase()===r.word.toLowerCase())r.on=o.on;});});
+    m.plan=plan;m.note='The note changed since this card was made, so these counts are new. Check them and tap Apply again.';
+    saveSessions();renderDetail();return;
+  }
+  plan.remember=m.plan.remember||plan.remember;
+  // one level of Undo: only the newest applied card keeps the note as it was
+  var snap={};
+  EDIT_KEYS.forEach(function(k){if(k in s)snap[k]=JSON.parse(JSON.stringify(s[k]));});
+  s.chat.forEach(function(x){if(x.role==='edit'&&x.snap)delete x.snap;});
+  if(plan.words.length){
+    var fx=wordFx(plan.words);
+    s.segs.forEach(function(x){x.text=swapWords(x.text,fx);});
+    if(s.summary)s.summary=mapText(s.summary,function(t){return swapWords(t,fx);});
+    if(s.deep)s.deep=mapText(s.deep,function(t){return swapWords(t,fx);});
+  }
+  if(plan.speakers.length){
+    var labels=noteLabels(s),jm=joinMap(labels,plan.speakers),pairs=[],seen={};
+    s.segs.forEach(function(x){if(jm.pos[x.sp]!=null)x.sp=jm.pos[x.sp];});
+    labels.forEach(function(l,i){if(l!==jm.to[i]&&!seen[l]){seen[l]=1;pairs.push({from:l,to:jm.to[i]});}});
+    s.spkNames=jm.newLabels;
+    if(s.summary)s.summary=relabel(s.summary,pairs);
+    if(s.deep)s.deep=relabel(s.deep,pairs);
+    s.joined=true;
+  }
+  m.plan=plan;m.snap=snap;m.status='applied';delete m.note;
+  saveSessions();
+  rememberWords(m);
+  renderDetail();
+}
+function cancelEdit(ci){
+  var c=editCard(ci);if(!c||busy||c.m.status!=='pending')return;
+  c.m.status='cancelled';delete c.m.note;saveSessions();renderDetail();
+}
+function undoEdit(ci){
+  var c=editCard(ci);if(!c||busy||c.m.status!=='applied'||!c.m.snap)return;
+  var s=c.s,snap=c.m.snap;
+  EDIT_KEYS.forEach(function(k){if(k in snap)s[k]=snap[k];else delete s[k];});
+  delete c.m.snap;c.m.status='undone';
+  saveSessions();renderDetail();
+}
+// After a join the old write-ups describe too many people: the same summary and insights calls, one after the other.
+function redoWriteups(ci){
+  var c=editCard(ci);if(!c||c.m.status!=='applied'||!guard('redo'))return;
+  var s=c.s,m=c.m;
+  summaryFor(s).then(function(){return deepFor(s);}).then(function(){m.redone=true;saveSessions();}).catch(function(e){
+    flash(e.message==='nokey'?'Add your Anthropic API key or Free AI link in Settings first.':e.message==='phonekey'?KEY_MSG:
+      'The summary and insights did not come back. Try again.','warn');
+  }).then(done);
+}
+
+// Names the mini should spell right in future recordings: same rules as the mini (CONTRACT.md).
+var WORD_OK=/^[\p{L}\p{Nd} '.&-]{1,40}$/u,memLive=[];
+function cleanWord(w){return String(w||'').normalize('NFC').replace(/[‘’ʼ]/g,"'").replace(/\s+/g,' ').trim();}
+function goodWord(w){return WORD_OK.test(w)&&/\p{L}/u.test(w);}
+// One POST to the naming link (it carries the phone key, like naming a speaker). No update reload while it runs.
+function wordsCall(body,ms){
+  var url=nameUrl();
+  if(!url)return Promise.reject(new Error('nolink'));
+  namingN++;
+  var counted=true,fin=function(){if(counted){counted=false;namingN--;}};
+  var ac=window.AbortController?new AbortController():null,timer=setTimeout(function(){if(ac)ac.abort();},ms);
+  return fetch(url,{method:'POST',headers:linkHeaders({'content-type':'application/json'}),signal:ac?ac.signal:undefined,
+    body:JSON.stringify(body)}).then(function(r){
+    if(r.status===403)throw keyErr();
+    if(!r.ok)throw new Error('status '+r.status);
+    return r.json();
+  }).then(function(d){fin();clearTimeout(timer);return d;},function(e){fin();clearTimeout(timer);throw e;});
+}
+// The edit is already applied: a failure here never undoes it, the card just says so.
+function rememberWords(m){
+  var add=[],skip=[];
+  (m.plan.remember||[]).forEach(function(r){
+    if(!r.on)return;
+    var w=cleanWord(r.word);
+    if(!goodWord(w)){skip.push(r.word);return;}
+    if(!add.some(function(x){return x.toLowerCase()===w.toLowerCase();}))add.push(w);
+  });
+  if(!add.length&&!skip.length)return;
+  var mem=m.mem={words:add,skip:skip,state:add.length?'sending':'none'};
+  if(!add.length)return;
+  if(!nameUrl()||!phoneKey){mem.state='nolink';saveSessions();return;}
+  memLive.push(mem);saveSessions();
+  wordsCall({words:{add:add}},30000).then(function(d){
+    if(d&&d.ok)mem.state='ok';
+    else{mem.state='refused';mem.error=String((d&&d.error)||'').slice(0,80);}
+  },function(e){
+    if(e&&e.message==='phonekey'){markKeyRefused();mem.state='key';}
+    else mem.state='fail';
+  }).then(function(){
+    var i=memLive.indexOf(mem);if(i>-1)memLive.splice(i,1);
+    saveSessions();
+    if(!$('viewDetail').classList.contains('hide')&&!busy)renderDetail();
+  });
+}
+function memLines(m){
+  var mem=m.mem,out=[];if(!mem)return out;
+  var W=joinAnd(mem.words),was=mem.words.length>1?'were':'was';
+  if(mem.state==='sending')out.push(memLive.indexOf(mem)>-1?'Remembering '+W+' for future recordings…':
+    'Not sure if '+W+' '+was+' remembered. Check Names the mini knows in Settings.');
+  if(mem.state==='ok')out.push('Remembered '+W+' for future recordings.');
+  if(mem.state==='nolink')out.push('Not remembered: add the Plaud sync link and phone key in Settings.');
+  if(mem.state==='key')out.push(W+' '+was+' not remembered. '+KEY_MSG);
+  if(mem.state==='fail')out.push('Could not reach the mini, so '+W+' '+was+' not remembered.');
+  if(mem.state==='refused')out.push(mem.error==='list full'?
+    'The mini’s name list is full, so '+W+' '+was+' not remembered. Remove a name in Settings first.':
+    'The mini did not remember '+W+(mem.error?' ('+mem.error+')':'')+'.');
+  if(mem.skip.length)out.push('Not remembered: '+joinAnd(mem.skip.map(quo))+
+    '. A name can use letters, numbers, spaces and \' - . & only, up to 40.');
+  return out;
+}
+function editCardHtml(s,m,ci){
+  var p=m.plan,at=' data-ci="'+ci+'"',dis=busy?' disabled':'',btns='',h='<div class="ecard"'+at+'>';
+  h+='<div class="ehead">'+(m.status==='pending'?'Fix to check. Nothing changes until you tap Apply.':'Fix')+'</div>';
+  if(p.say)h+='<div>'+esc(p.say)+'</div>';
+  (p.remember||[]).forEach(function(r,ri){
+    p.words.forEach(function(w){
+      if(w.to.toLowerCase()!==r.word.toLowerCase())return;
+      h+='<div class="eline">'+esc(w.from)+' → '+esc(w.to)+', '+nPlaces(w.n)+'</div>';
+      if(w.nW)h+='<div class="esub">'+w.nT+' in the transcript, '+w.nW+' in the summary and insights</div>';
+    });
+    if(m.status==='pending')h+='<label class="erem"><input type="checkbox"'+at+' data-rem="'+ri+'"'+(r.on?' checked':'')+dis+'>'+
+      '<span>Remember '+esc(r.word)+' for future recordings</span></label>';
+  });
+  if(p.speakers.length){
+    if(p.guessed)h+=m.status==='pending'?'<div class="eguess">These joins are a guess from the wording. Check them before you tap Apply.</div>':
+      '<div class="esub" style="margin-top:8px">These joins were a guess from the wording.</div>';
+    p.speakers.forEach(function(j){h+='<div class="eline">'+esc(j.from)+' → '+esc(j.into)+', '+nLines(j.n)+'</div>';});
+    h+='<div class="esub">This note goes from '+p.before+' speakers to '+p.after+'.'+
+      (p.renamed.length?' Then '+esc(joinAnd(p.renamed.map(function(r){return r.from+' is called '+r.to;})))+'.':'')+'</div>';
+    if(s.source==='Plaud')h+='<div class="esub">Joins change this note only. They never teach the mini’s voice memory.</div>';
+  }
+  if(p.left&&p.left.length)h+='<div class="esub" style="margin-top:8px">Left out: '+esc(p.left.join(' '))+'</div>';
+  if(m.note)h+='<div class="eguess">'+esc(m.note)+'</div>';
+  if(m.status==='pending')btns='<button class="btn sm" data-act="apply"'+at+dis+'>Apply</button>'+
+    '<button class="btn sm ghost" data-act="cancel"'+at+dis+'>Cancel</button>';
+  if(m.status==='cancelled')h+='<div class="estat">Cancelled. Nothing changed.</div>';
+  if(m.status==='undone'){
+    h+='<div class="estat">Undone. The note is back the way it was before Apply.</div>';
+    if(m.mem&&m.mem.state==='ok')h+='<div class="esub">'+esc(joinAnd(m.mem.words))+(m.mem.words.length>1?' are':' is')+
+      ' still remembered for future recordings. You can remove '+(m.mem.words.length>1?'them':'it')+' in Settings.</div>';
+  }
+  if(m.status==='applied'){
+    h+='<div class="estat" style="color:var(--ok);font-weight:600">Applied to this note.</div>';
+    memLines(m).forEach(function(t){h+='<div class="esub">'+esc(t)+'</div>';});
+    if(p.speakers.length&&(s.summary||s.deep)){
+      if(m.redone)h+='<div class="esub">The summary and insights were redone after the join.</div>';
+      else{
+        h+='<div class="esub">The summary and insights were written for '+p.before+' speakers. Redo them to match.</div>';
+        btns+='<button class="btn sm" data-act="redo"'+at+dis+'>'+
+          ((busy&&busyWhat==='redo')?'<span class="spin"></span> Redoing':'Redo summary and insights')+'</button>';
+      }
+    }
+    if(m.snap)btns+='<button class="btn sm ghost" data-act="undo"'+at+dis+'>Undo</button>';
+  }
+  if(btns)h+='<div class="ebtns">'+btns+'</div>';
+  return h+'</div>';
+}
+
+/* ---------- names the mini knows (Settings) ---------- */
+// Loaded once each time Settings opens, never polled. Remove = one call; the list shown is what the mini answers.
+var wordsNow=[],wordsBusy=false,wordsSeq=0;
+function renderWords(msg){
+  $('wordsList').innerHTML=wordsNow.map(function(w,i){
+    return '<span class="wchip"><span>'+esc(w)+'</span><button data-w="'+i+'" aria-label="Remove '+esc(w)+'"'+
+      (wordsBusy?' disabled':'')+'>×</button></span>';}).join('');
+  $('wordsList').classList.toggle('hide',!wordsNow.length);
+  $('wordsMsg').textContent=msg||'';$('wordsMsg').classList.toggle('hide',!msg);
+  Array.prototype.forEach.call($('wordsList').querySelectorAll('[data-w]'),function(b){
+    b.onclick=function(){removeWord(parseInt(b.getAttribute('data-w'),10));};
+  });
+}
+function wordsAnswer(d){return !!(d&&d.ok&&Array.isArray(d.words));}
+function loadWords(){
+  var seq=++wordsSeq;wordsNow=[];wordsBusy=false;
+  if(!syncUrl)return renderWords('Add the Plaud sync link above to see them.');
+  if(!nameUrl())return renderWords('This sync link has no naming link next to it, so the names can’t be shown.');
+  if(!phoneKey)return renderWords('Add the phone key above to see them.');
+  wordsBusy=true;renderWords('Getting the list from the mini…');
+  wordsCall({words:{list:true}},15000).then(function(d){
+    if(seq!==wordsSeq)return;
+    wordsBusy=false;
+    if(!wordsAnswer(d))return renderWords('The mini could not list the names'+(d&&d.error?' ('+d.error+')':'')+'.');
+    wordsNow=d.words.map(String);
+    renderWords(wordsNow.length?'':'No names yet. When you fix a name in Ask, the app can remember it here.');
+  },function(e){
+    if(seq!==wordsSeq)return;
+    wordsBusy=false;
+    if(e&&e.message==='phonekey'){markKeyRefused();return renderWords(KEY_MSG);}
+    renderWords('The mini did not answer. Close Settings and open it again to try again.');
+  });
+}
+function removeWord(i){
+  var w=wordsNow[i],seq=wordsSeq;if(w==null||wordsBusy)return;
+  wordsBusy=true;renderWords('Removing '+w+'…');
+  wordsCall({words:{remove:[w]}},15000).then(function(d){
+    if(seq!==wordsSeq)return;
+    wordsBusy=false;
+    if(!wordsAnswer(d))return renderWords('The mini could not remove '+w+(d&&d.error?' ('+d.error+')':'')+'.');
+    wordsNow=d.words.map(String);
+    renderWords('Removed '+w+'.');
+  },function(e){
+    if(seq!==wordsSeq)return;
+    wordsBusy=false;
+    if(e&&e.message==='phonekey'){markKeyRefused();return renderWords(KEY_MSG);}
+    renderWords('Could not reach the mini, so '+w+' was not removed.');
+  });
 }
 
 /* ---------- export ---------- */
@@ -2089,6 +2516,7 @@ function init(){
     syncUrl=$('syncUrl').value.trim();
     try{localStorage.setItem(KEY_SYNC,syncUrl);localStorage.removeItem(KEY_SINCE);}catch(e){}
     renderSyncBar();setCapMode(prefs.capture||'audio');
+    if(!$('sheet').classList.contains('hide'))loadWords();
     if(syncUrl)syncPlaud(true);
   };
   $('syncBtn').onclick=function(){syncPlaud(true);};
@@ -2120,7 +2548,7 @@ function init(){
     saveSessions();activeId=null;show('lib');
   };
 
-  $('gearBtn').onclick=function(){$('updMsg').classList.add('hide');$('sheet').classList.remove('hide');};
+  $('gearBtn').onclick=function(){$('updMsg').classList.add('hide');$('sheet').classList.remove('hide');loadWords();};
   $('updNow').onclick=function(){
     if(updBusy(true)){$('updMsg').classList.remove('hide');return;}
     updApply(updWaiting,true);
